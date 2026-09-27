@@ -4,7 +4,7 @@ from torch import Tensor
 from typing import Optional, Tuple
 from tqdm import trange
 
-from token_manager import TokenManager
+from .token_manager import TokenManager
 
 
 def compute_token_gradient(
@@ -24,7 +24,11 @@ def compute_token_gradient(
     model.zero_grad(set_to_none=True)
 
     # One-hot encode the suffix tokens
-    one_hot = F.one_hot(suffix_ids, num_classes=vocab_size).float()
+    one_hot = F.one_hot(
+        suffix_ids,
+        num_classes=vocab_size
+    ).to(dtype=embedding_matrix.dtype)
+    
     one_hot = one_hot.clone().detach().requires_grad_(True)
 
     # Suffix embeddings via matrix multiplication
