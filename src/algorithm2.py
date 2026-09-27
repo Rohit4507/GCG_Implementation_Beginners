@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as F
 from torch import Tensor
 from typing import List, Tuple
 from tqdm import trange
@@ -27,9 +26,17 @@ def run_universal_gcg(
     verbose: bool = True,
 ) -> Tuple[Tensor, list]:
     """
-    Algorithm 2: Universal/multi-prompt GCG Engine (Optimized & Vectorized 🚀)
+    Algorithm 2: Universal/multi-prompt GCG Engine.
+
+    A shared suffix is optimized across multiple goal/target pairs.
+    Prompts are introduced progressively according to
+    num_prompts_start and prompt_add_interval.
     """
-    assert len(goals) == len(targets), "Goals and targets dimension mismatch!"
+
+    assert len(goals) == len(targets), (
+        "Goals and targets dimension mismatch!"
+    )
+
     device = suffix_ids.device
     total_prompts = len(goals)
 
@@ -37,17 +44,27 @@ def run_universal_gcg(
     best_loss = float("inf")
     best_suffix = suffix_ids.clone()
 
-    iterator = trange(num_steps, desc="Universal GCG Loop", disable=not verbose)
+    iterator = trange(
+        num_steps,
+        desc="Universal GCG Loop",
+        disable=not verbose,
+    )
 
     for step in iterator:
-        # ---- Progressive prompt schedule (Algorithm 2, line 3) ----
+
+        # ---------------------------------------------------------
+        # Progressive prompt schedule
+        # ---------------------------------------------------------
         num_active = min(
             num_prompts_start + step // prompt_add_interval,
             total_prompts,
         )
-        
-        # Build active managers dynamically based on the current step's suffix configuration
+
+        # ---------------------------------------------------------
+        # Build TokenManagers for currently active prompts
+        # ---------------------------------------------------------
         active_tms = []
+
         for i in range(num_active):
             tm = TokenManager(
                 tokenizer=tokenizer,
@@ -56,47 +73,30 @@ def run_universal_gcg(
                 suffix_ids=suffix_ids,
                 device=str(device),
             )
+
             active_tms.append(tm)
 
-        # ---- Step 1: Aggregate gradients across active prompts ----
-        aggregated_grad = torch.zeros(suffix_ids.shape[0], tokenizer.vocab_size, device=device)
+        # ---------------------------------------------------------
+        # Step 1: Aggregate normalized gradients
+        # ---------------------------------------------------------
+        aggregated_grad = torch.zeros(
+            suffix_ids.shape[0],
+            tokenizer.vocab_size,
+            device=device,
+            dtype=model.get_input_embeddings().weight.dtype,
+        )
+
         total_loss = 0.0
 
         for tm in active_tms:
-            grad, loss_val = compute_token_gradient(model, tm, suffix_ids)
-            aggregated_grad += grad
-            total_loss += loss_val
 
-        # Average aggregation mapping
-        aggregated_grad /= num_active
-        mean_loss = total_loss / num_active
-
-        # ---- Steps 2–3: Sample candidates using aggregated gradient ----
-        candidates = sample_candidates(suffix_ids, aggregated_grad, topk, search_width)
-
-        # ---- Step 4: Universal Filter via Cross-Prompt Validation ----
-        # Suffix must not break boundaries on ANY active prompt structure
-        for tm in active_tms:
-            candidates = tm.filter_candidates(candidates)
-            if candidates.shape[0] <= 1: # Break early if filter drops everything
-                break
-
-        # ---- Step 5: Evaluate candidates across ALL active prompts ----
-        num_candidates = candidates.shape[0]
-        total_candidate_losses = torch.zeros(num_candidates, device=device)
-
-        #for tm in active_tms:
-        #    losses = evaluate_candidates(model, tm, candidates, mini_batch_size)
-        #    total_candidate_losses += losses
-        
-        for tm in active_tms:
             grad, loss_val = compute_token_gradient(
                 model,
                 tm,
                 suffix_ids,
             )
 
-            # Normalize each prompt's gradient before aggregation.
+            # Normalize each prompt's gradient
             grad_norm = torch.linalg.vector_norm(grad)
 
             if grad_norm > 0:
@@ -105,31 +105,104 @@ def run_universal_gcg(
             aggregated_grad += grad
             total_loss += loss_val
 
-        # Average the normalized gradients.
+        # Average normalized gradients
         aggregated_grad /= num_active
 
         mean_loss = total_loss / num_active
-        
 
-        # ---- Step 6: Greedy selection mechanics ----
+        # ---------------------------------------------------------
+        # Steps 2–3: Sample candidate suffixes
+        # ---------------------------------------------------------
+        candidates = sample_candidates(
+            suffix_ids,
+            aggregated_grad,
+            topk,
+            search_width,
+        )
+
+        # ---------------------------------------------------------
+        # Step 4: Universal filtering
+        # Candidate must remain valid for every active prompt.
+        # ---------------------------------------------------------
+        for tm in active_tms:
+
+            candidates = tm.filter_candidates(
+                candidates
+            )
+
+            # Stop if filtering leaves <= 1 candidate
+            if candidates.shape[0] <= 1:
+                break
+
+        # ---------------------------------------------------------
+        # Step 5: Evaluate candidates across ALL active prompts
+        # ---------------------------------------------------------
+        num_candidates = candidates.shape[0]
+
+        total_candidate_losses = torch.zeros(
+            num_candidates,
+            device=device,
+        )
+
+        for tm in active_tms:
+
+            losses = evaluate_candidates(
+                model,
+                tm,
+                candidates,
+                mini_batch_size,
+            )
+
+            total_candidate_losses += losses
+
+        # Average candidate loss across active prompts
+        mean_candidate_losses = (
+            total_candidate_losses / num_active
+        )
+
+        # ---------------------------------------------------------
+        # Step 6: Greedy candidate selection
+        # ---------------------------------------------------------
         best_idx = mean_candidate_losses.argmin().item()
-        new_loss = mean_candidate_losses[best_idx].item()
 
-        suffix_ids = candidates[best_idx].detach().clone()
+        new_loss = mean_candidate_losses[
+            best_idx
+        ].item()
 
+        suffix_ids = candidates[
+            best_idx
+        ].detach().clone()
+
+        # ---------------------------------------------------------
+        # Update global best suffix
+        # ---------------------------------------------------------
         if new_loss < best_loss:
+
             best_loss = new_loss
             best_suffix = suffix_ids.clone()
 
-        loss_history.append((step, new_loss))
+        # Store loss history
+        loss_history.append(
+            (step, new_loss)
+        )
 
-        # Dynamic string metrics output console display
-        suffix_str = tokenizer.decode(suffix_ids, skip_special_tokens=True)
+        # ---------------------------------------------------------
+        # Progress display
+        # ---------------------------------------------------------
+        suffix_str = tokenizer.decode(
+            suffix_ids,
+            skip_special_tokens=True,
+        )
+
         if verbose:
             iterator.set_postfix(
                 mean_loss=f"{new_loss:.4f}",
                 prompts=f"{num_active}/{total_prompts}",
-                suffix=suffix_str[:15] + "..." if len(suffix_str) > 15 else suffix_str
+                suffix=(
+                    suffix_str[:15] + "..."
+                    if len(suffix_str) > 15
+                    else suffix_str
+                ),
             )
 
     return best_suffix, loss_history
