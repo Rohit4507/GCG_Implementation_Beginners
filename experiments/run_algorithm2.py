@@ -109,15 +109,24 @@ def main():
 
     # ---- Plot ----
     steps, losses = zip(*loss_history)
+
     plt.figure(figsize=(10, 4))
+
     plt.plot(steps, losses)
+
     plt.xlabel("Step")
     plt.ylabel("Mean Loss (across active prompts)")
     plt.title("GCG Optimization — Universal Attack (Algorithm 2)")
     plt.tight_layout()
-    plt.savefig("loss_universal.png", dpi=150)
+
+    plt.savefig(
+        "results/plots/loss_universal.png",
+        dpi=150,
+    )
+
     plt.show()
-    print("\nLoss plot saved to loss_universal.png")
+
+    print("\nLoss plot saved to results/plots/loss_universal.png")
 
 
 if __name__ == "__main__":

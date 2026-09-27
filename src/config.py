@@ -33,7 +33,7 @@ class GCGConfig:
 
     # ---------- universal (Algorithm 2) ----------
     num_prompts_start: int = 1      # start with this many prompts
-    prompt_add_interval: int = 50   # add one prompt every N steps
+    prompt_add_interval: int = 5   # add one prompt every N steps
 
     # ---------- benign prompts & targets ----------
     goals: List[str] = field(default_factory=lambda: [
