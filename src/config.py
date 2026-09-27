@@ -11,10 +11,10 @@ class GCGConfig:
 
     # ---------- algorithm ----------
     # DEBUG MODE (For quick errors, tokenization & CUDA checks)
-    num_steps: int = 250            # T in Algorithm 1
-    suffix_length: int = 20         # |s| — number of adversarial suffix tokens
-    topk: int = 256                 # k in Algorithm 1
-    search_width: int = 512         # B — number of candidates per step
+    num_steps: int = 10            # T in Algorithm 1
+    suffix_length: int = 8         # |s| — number of adversarial suffix tokens
+    topk: int = 10                 # k in Algorithm 1
+    search_width: int = 16         # B — number of candidates per step
     seed: int = 42
 
     # PAPER MODE (Uncomment these later for full training)

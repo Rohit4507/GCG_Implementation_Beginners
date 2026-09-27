@@ -85,11 +85,31 @@ def run_universal_gcg(
         num_candidates = candidates.shape[0]
         total_candidate_losses = torch.zeros(num_candidates, device=device)
 
+        #for tm in active_tms:
+        #    losses = evaluate_candidates(model, tm, candidates, mini_batch_size)
+        #    total_candidate_losses += losses
+        
         for tm in active_tms:
-            losses = evaluate_candidates(model, tm, candidates, mini_batch_size)
-            total_candidate_losses += losses
+            grad, loss_val = compute_token_gradient(
+                model,
+                tm,
+                suffix_ids,
+            )
 
-        mean_candidate_losses = total_candidate_losses / num_active
+            # Normalize each prompt's gradient before aggregation.
+            grad_norm = torch.linalg.vector_norm(grad)
+
+            if grad_norm > 0:
+                grad = grad / grad_norm
+
+            aggregated_grad += grad
+            total_loss += loss_val
+
+        # Average the normalized gradients.
+        aggregated_grad /= num_active
+
+        mean_loss = total_loss / num_active
+        
 
         # ---- Step 6: Greedy selection mechanics ----
         best_idx = mean_candidate_losses.argmin().item()
