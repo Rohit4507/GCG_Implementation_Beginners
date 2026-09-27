@@ -2,6 +2,7 @@
 Run individual GCG (Algorithm 1) on a single benign prompt.
 Optimized and synchronized with the enhanced TokenManager engine.
 """
+#for run python -m experiments.run_algorithm1
 
 import torch
 import matplotlib.pyplot as plt
