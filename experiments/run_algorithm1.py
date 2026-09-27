@@ -27,9 +27,11 @@ def main():
     print(f"Loading {cfg.model_id} ...")
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_id)
     model = AutoModelForCausalLM.from_pretrained(
-        cfg.model_id, torch_dtype=torch_dtype
+        cfg.model_id, 
+        dtype=torch_dtype
     ).to(cfg.device)
     model.eval()
+
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -110,8 +112,19 @@ def main():
     else:
         gen_kwargs["do_sample"] = False  # Pure greedy parsing protocol
 
+    #with torch.no_grad():
+    #    output_ids = model.generate(prompt_ids, **gen_kwargs)
+
+    #attention_mask = torch.ones_like(prompt_ids)
+
+    attention_mask = torch.ones_like(prompt_ids)
+
     with torch.no_grad():
-        output_ids = model.generate(prompt_ids, **gen_kwargs)
+        output_ids = model.generate(
+            input_ids=prompt_ids,
+            attention_mask=attention_mask,
+            **gen_kwargs,
+        )
 
     response = tokenizer.decode(
         output_ids[0][prompt_ids.shape[1]:],
