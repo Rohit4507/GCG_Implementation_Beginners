@@ -135,17 +135,26 @@ def main():
 
     # ---- Plot loss curve ----
     plt.figure(figsize=(10, 4))
-    plt.plot(loss_history, label="Cross-Entropy Target Loss", color="crimson")
+    plt.plot(
+        loss_history,
+        label="Cross-Entropy Target Loss",
+        color="crimson",
+    )
     plt.xlabel("Optimization Step")
     plt.ylabel("Loss Matrix Value")
     plt.title("GCG Optimization — Individual Attack Execution Curve")
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.legend()
     plt.tight_layout()
-    plt.savefig("loss_individual.png", dpi=150)
-    plt.close() # Safe memory close for background tracking environments
-    print("\nLoss plot saved to loss_individual.png")
 
+    plt.savefig(
+        "results/plots/loss_individual.png",
+        dpi=150,
+    )
+
+    plt.close()
+
+    print("\nLoss plot saved to results/plots/loss_individual.png")
 
 if __name__ == "__main__":
     main()
