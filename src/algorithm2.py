@@ -4,8 +4,8 @@ from torch import Tensor
 from typing import List, Tuple
 from tqdm import trange
 
-from token_manager import TokenManager
-from .gcg_algorithm import (
+from .token_manager import TokenManager
+from .algorithm1 import (
     compute_token_gradient,
     sample_candidates,
     evaluate_candidates,
