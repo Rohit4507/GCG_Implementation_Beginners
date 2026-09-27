@@ -5,7 +5,7 @@ from typing import List, Tuple
 from tqdm import trange
 
 from token_manager import TokenManager
-from gcg_algorithm import (
+from .gcg_algorithm import (
     compute_token_gradient,
     sample_candidates,
     evaluate_candidates,
