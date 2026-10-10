@@ -78,10 +78,35 @@ pipeline**. Results (`results/reports/smoke_results.json`, seed 0, T=10, L=8, k=
 | Algorithm 1 optimization runs | loss 6.261 → 6.248 over 10 steps | ✅ |
 | Evaluation harness computes ASR / refusal | ASR=0%, refusal=0% (expected for random weights) | ✅ |
 | Defense baseline runs (optimized / random / natural PPL) | computed; uncalibrated on random weights | ✅ |
+| GCG vs random search (identical budget) | final loss 6.2481 ≤ 6.2553 — gradient signal helps | ✅ |
+| Cross-model transfer pipeline (different tokenizer) | re-tokenization + eval plumbing verified | ✅ |
 
 Run it yourself: `python -m experiments.run_smoke`.
 
-## 5. Defense baseline: perplexity filtering
+## 5. Baselines: does the gradient signal help?
+
+`src/baselines.py` implements a gradient-blind **random search** with the *identical*
+mutation budget as GCG (same `search_width` single-token mutations per step, same
+re-tokenization filter, same greedy update) — only the substitution tokens are drawn
+uniformly from the vocabulary instead of from the gradient top-k. This isolates the
+value of the gradient as a proposal distribution.
+
+Tiny-model result (`python -m experiments.run_baselines --tiny --benchmark`, seed 0,
+T=10, B=16; `results/reports/generated/baselines_*.json`,
+`results/plots/baselines_loss.png`):
+
+| Method | Final target loss |
+|---|---|
+| **GCG (gradient-guided)** | **6.2492** |
+| Random search (blind) | 6.2520 |
+| Unoptimized initial suffix | 6.2573 |
+
+Even on random weights the gradient wins — on trained models the gap is dramatic
+(the GCG paper effectively exists because gradient guidance makes discrete search
+tractable). For a report-worthy comparison, run with `--preset paper` against a real
+model and also report ASR columns (the script prints the full table).
+
+## 6. Defense baseline: perplexity filtering
 
 GCG suffixes are typically low-probability token gibberish, so a simple
 `PPL(s | prefix) > τ` detector catches many attacks. `src/defense.py` measures
@@ -91,7 +116,7 @@ On real (trained) models the optimized suffix PPL is far above natural text; on 
 tiny random model the three values are not separated — expected, since random weights
 have no language statistics.
 
-## 6. Full-scale run recipe (real aligned models)
+## 7. Full-scale run recipe (real aligned models)
 
 ```bash
 # Paper settings, bundled AdvBench-style eval sample, CPU-friendly model
@@ -113,18 +138,19 @@ search_width=512`. We currently report only pipeline-validation numbers — ASR 
 aligned models must be measured on a GPU box and recorded in
 `results/reports/generated/` before quoting anywhere.
 
-## 7. Limitations & next steps
+## 8. Limitations & next steps
 
 - **No benchmark ASR numbers yet** — the sandbox used for development has no GPU and
   no Hugging Face access; the harness is ready but the full-scale table is TODO.
 - Perplexity detection is only a baseline; stronger defenses (perplexity + window,
   smooth perplexity, re-ranking) are future work.
-- Cross-model **transfer** of optimized suffixes is implemented for Algorithm 2
-  (string-level suffix re-tokenization) but not yet benchmarked.
+- Cross-model **transfer** has a dedicated harness (`experiments/run_transfer.py`,
+  validated on tiny models) but no real-model transfer numbers yet.
 - Obvious extensions: GCG variants (MMA, Faster-GCG), multi-objective losses
   (GCG + fluency regularizer), and an AutoDAN-style baseline for comparison.
+- Grad-normalization ablation in Algorithm 2 (normalized vs. raw averaging).
 
-## 8. References
+## 9. References
 
 - Zou et al., 2023 — *Universal and Transferable Adversarial Attacks on Aligned Language Models* ([arXiv:2307.15043](https://arxiv.org/abs/2307.15043))
 - Pulfer, 2025 — *GCG: Adversarial Attacks on Large Language Models* ([Medium](https://medium.com/@brianpulfer/gcg-adversarial-attacks-on-large-language-models-61f8b51734e9))

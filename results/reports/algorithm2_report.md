@@ -47,8 +47,34 @@ one-off quirks but a structural robustness failure.
 - **Held-out generalization** — the suffix is also evaluated on prompts it never saw
   during optimization (`--held-out N`); this is the cheapest proxy for the paper's
   transferability claim without a second GPU model.
-- **Cross-model transfer (optional)** — an optimized suffix *string* can be
-  re-tokenized with another model's tokenizer and evaluated; see `src/evaluate.py`.
+- **Cross-model transfer** — `experiments/run_transfer.py`: optimize on model A,
+  carry the suffix over as **text** (the universal-suffix claim is about strings, not
+  token ids), re-tokenize for model B (truncate/pad to length; round-trip differences
+  are expected when tokenizers differ), and measure ASR / target loss on B against:
+  (i) an unoptimized-suffix baseline and (ii) optionally a suffix optimized directly
+  on B (`--optimize-target`) as the upper bound.
+
+## 3b. Transfer pipeline validation (offline, two tiny models)
+
+`python -m experiments.run_transfer --tiny --benchmark --optimize-target`
+(2 tiny random models, *different* seeds and vocab sizes so the tokenizers genuinely
+differ; seed 0, T=10, L=8 — `results/reports/generated/transfer_*.json`):
+
+| Variant | Target loss (model B) |
+|---|---|
+| Suffix optimized on B (upper bound) | 6.1148 |
+| Unoptimized initial suffix | 6.1210 |
+| Transferred from A (re-tokenized) | 6.1242 |
+
+The plumbing is fully validated (re-tokenization to exact length, evaluation,
+loss comparison). On random weights there is **no transfer gain** — expected:
+transfer requires shared linguistic structure that only real (trained) models have.
+The recipe for the real experiment:
+
+```bash
+python -m experiments.run_transfer --preset paper --benchmark \
+    --model Qwen/Qwen3-0.6B --target-model Qwen/Qwen3-1.7B --optimize-target
+```
 
 ## 4. Pipeline validation (offline, tiny random model)
 
@@ -89,8 +115,10 @@ search_width=512`, progressive schedule `num_prompts_start=1, prompt_add_interva
 - Gradient normalization vs. simple mean: we follow the normalize-then-average
   design (a la llm-attacks' `GCG` multi-prompt mode); an ablation vs. raw averaging
   would make a nice result table.
-- Cross-model transfer evaluation (different tokenizers) is wired but not benchmarked.
-- Compare against random-search and no-attack baselines for the report table.
+- Cross-model transfer harness is done and validated on tiny models
+  (`experiments/run_transfer.py`); real-model transfer numbers are TODO.
+- Random-search baseline is done (`experiments/run_baselines.py`, see the
+  Algorithm 1 report); plug it into the universal setting as the next ablation.
 
 ## 7. References
 

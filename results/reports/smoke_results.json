@@ -42,6 +42,19 @@
         "natural": false
       },
       "notes": "Ideal detector behavior: optimized=True, random=True, natural=False. On a randomly-initialized tiny model the perplexities are not calibrated; on real models this filter cleanly separates gibberish suffixes from natural text."
+    },
+    "random_search_baseline": {
+      "pass": true,
+      "gcg_final_loss": 6.248098373413086,
+      "random_search_final_loss": 6.255299091339111,
+      "note": "GCG final loss should be <= random-search final loss (the gradient signal helps)."
+    },
+    "transfer_pipeline": {
+      "pass": true,
+      "source_suffix": "ou 0123456789abcdefgh \u00a2 \u00a2 \u00a2 \u00a2 escri ou",
+      "retokenized_suffix": "ou 0123456789abcdefgh \u00a2 \u00a2 \u00a2 \u00a2 escri ou",
+      "target_loss_on_model_b": 6.075632572174072,
+      "note": "Validates cross-model re-tokenization + evaluation plumbing; transfer gains require real (trained) models."
     }
   }
 }
