@@ -214,6 +214,67 @@ def main():
           f"threshold={def_exp['threshold']:.1f} ({'PASS' if def_ok else 'FAIL'})")
 
     # ------------------------------------------------------------------
+    # 5. Random-search baseline (gradient signal must help)
+    # ------------------------------------------------------------------
+    from src.baselines import run_random_search
+
+    torch.manual_seed(SEED)
+    gcg_s, gcg_l = run_gcg(
+        model, tokenizer, goal, target, suffix_init.clone(),
+        num_steps=STEPS, topk=TOPK, search_width=SEARCH_WIDTH,
+        mini_batch_size=8, use_kv_cache=True, verbose=False,
+    )
+    torch.manual_seed(SEED)
+    rnd_s, rnd_l = run_random_search(
+        model, tokenizer, goal, target, suffix_init.clone(),
+        num_steps=STEPS, search_width=SEARCH_WIDTH,
+        mini_batch_size=8, use_kv_cache=True, verbose=False,
+    )
+    base_ok = len(rnd_l) == STEPS and gcg_l[-1] <= rnd_l[-1] + 1e-6
+    results["checks"]["random_search_baseline"] = {
+        "pass": base_ok,
+        "gcg_final_loss": gcg_l[-1],
+        "random_search_final_loss": rnd_l[-1],
+        "note": "GCG final loss should be <= random-search final loss "
+                "(the gradient signal helps).",
+    }
+    print(f"[5] GCG vs random search: final loss {gcg_l[-1]:.4f} vs "
+          f"{rnd_l[-1]:.4f} ({'PASS' if base_ok else 'FAIL'})")
+    assert base_ok, "GCG failed to beat random search on the tiny model"
+
+    # ------------------------------------------------------------------
+    # 6. Cross-model transfer pipeline (two tiny models, different tokenizers)
+    # ------------------------------------------------------------------
+    from src.tiny_model import build_tiny_model_and_tokenizer as _build2
+
+    model_b, tok_b = _build2(
+        goals=benign_goals, targets=benign_targets,
+        seed=SEED + 1, vocab_size=451,
+    )
+    suffix_text = tokenizer.decode(gcg_s, skip_special_tokens=True)
+    suffix_b = init_suffix_ids(tok_b, suffix_text, SUFFIX_LEN, device)
+    ev_b = evaluate_pairs(
+        model_b, tok_b, benign_goals[:1], benign_targets[:1], suffix_b,
+        max_new_tokens=8, temperature=0.0, device=device,
+    )
+    from src.baselines import target_loss as _tloss
+    from src.token_manager import TokenManager as _TM
+    tm_b = _TM(tok_b, benign_goals[0], benign_targets[0], suffix_b, device)
+    tr_loss = _tloss(model_b, tm_b, suffix_b)
+    tr_ok = suffix_b.shape[0] == SUFFIX_LEN and "summary" in ev_b and tr_loss == tr_loss
+    results["checks"]["transfer_pipeline"] = {
+        "pass": tr_ok,
+        "source_suffix": suffix_text,
+        "retokenized_suffix": tok_b.decode(suffix_b, skip_special_tokens=True),
+        "target_loss_on_model_b": tr_loss,
+        "note": "Validates cross-model re-tokenization + evaluation plumbing; "
+                "transfer gains require real (trained) models.",
+    }
+    print(f"[6] Transfer pipeline: suffix re-tokenized to "
+          f"{suffix_b.shape[0]} tokens on model B, loss={tr_loss:.4f} "
+          f"({'PASS' if tr_ok else 'FAIL'})")
+
+    # ------------------------------------------------------------------
     # Write machine-readable results
     # ------------------------------------------------------------------
     out_json = os.path.join(REPORTS_DIR, "smoke_results.json")

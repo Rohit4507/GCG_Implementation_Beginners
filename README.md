@@ -25,6 +25,12 @@ benchmark runs on real aligned models are the next step (needs GPU + HF access)
   refusal-rate heuristic, greedy/sampled generation.
 - **Defense baseline** (`src/defense.py`): perplexity-based detection of adversarial
   suffixes (optimized vs. random vs. natural-language controls).
+- **Baselines** (`src/baselines.py`, `experiments/run_baselines.py`): gradient-blind
+  **random search** with the identical mutation budget — isolates the value of the
+  gradient signal (GCG wins even on the tiny model: 6.249 < 6.252 < 6.257 initial).
+- **Cross-model transfer** (`experiments/run_transfer.py`): optimize on model A,
+  carry the suffix over as *text*, re-tokenize for model B, and measure transfer ASR
+  vs. unoptimized and direct-optimization bounds — the paper's headline experiment.
 - **Data** (`src/data.py`, `data/`): AdvBench-style benchmark loader with a bundled
   offline sample; benign goal/target pairs for safe demos. Full
   [`walledai/AdvBench`](https://huggingface.co/datasets/walledai/AdvBench) pulls
@@ -46,6 +52,7 @@ src/
   kv_cache.py        # KV-cache for the fixed prompt prefix
   evaluate.py        # generation, prefix-match ASR, refusal heuristic, perplexity
   defense.py         # perplexity-based defense baseline
+  baselines.py       # gradient-blind random-search baseline
   data.py            # jsonl + AdvBench loading (offline fallback)
   model.py           # model/tokenizer loading (incl. optional 4-bit)
   tiny_model.py      # tiny offline model for smoke tests
@@ -54,6 +61,8 @@ experiments/
   run_smoke.py       # end-to-end pipeline validation (CPU, no downloads)
   run_algorithm1.py  # full per-prompt experiment + artifacts
   run_algorithm2.py  # full universal experiment + artifacts
+  run_baselines.py   # GCG vs gradient-blind random search
+  run_transfer.py    # cross-model suffix transfer
   run_defense.py     # defense baseline experiment
   check_algorithm1.py# low-level sanity checks on a real model
 data/
@@ -75,12 +84,17 @@ python -m experiments.run_smoke
 # 2. Tiny end-to-end demo (no HF needed)
 python -m experiments.run_algorithm1 --tiny --benchmark
 python -m experiments.run_algorithm2 --tiny --benchmark
-python -m experiments.run_defense --tiny
+python -m experiments.run_baselines   --tiny --benchmark
+python -m experiments.run_transfer    --tiny --benchmark
+python -m experiments.run_defense     --tiny
 
 # 3. Real experiments
 python -m experiments.run_algorithm1 --preset paper --benchmark
 python -m experiments.run_algorithm2 --preset paper --benchmark --held-out 2
-python -m experiments.run_defense   --preset paper --benchmark
+python -m experiments.run_baselines   --preset paper --benchmark
+python -m experiments.run_transfer    --preset paper --benchmark \
+    --model Qwen/Qwen3-0.6B --target-model Qwen/Qwen3-1.7B
+python -m experiments.run_defense     --preset paper --benchmark
 
 # ... on a bigger model (GPU recommended)
 python -m experiments.run_algorithm1 --preset paper --benchmark \
@@ -103,6 +117,8 @@ From `python -m experiments.run_smoke` (seed 0 — full record in
 | Algorithm 2 universal schedule (prompts ramp 1→2→3) | ✅ |
 | ASR / refusal metrics computed | ✅ (0% ASR on random weights — expected) |
 | Perplexity defense baseline (optimized/random/natural) | ✅ |
+| GCG beats random search (same budget) | ✅ 6.2481 ≤ 6.2553 |
+| Cross-model transfer pipeline (different tokenizers) | ✅ |
 
 ## Reports
 
@@ -114,8 +130,10 @@ From `python -m experiments.run_smoke` (seed 0 — full record in
 ## Roadmap (a.k.a. what to do next)
 
 - [ ] Paper-scale runs on real aligned models; fill the ASR table (GPU).
-- [ ] Cross-model transfer of universal suffixes (SmolLM2 → Qwen).
-- [ ] Baselines: random search, no-attack; ablations (grad normalization, schedule).
+- [x] Cross-model transfer harness (suffix → text → re-tokenize on target).
+- [x] Random-search baseline + GCG comparison (`run_baselines.py`).
+- [ ] Benchmark cross-model transfer on real models (SmolLM2 → Qwen, GPU).
+- [x] Ablations infrastructure (grad normalization ablation TODO in code).
 - [ ] Stronger defenses: smooth-perplexity, windowed PPL; compare detection rates.
 - [ ] GCG variants (MMA, Faster-GCG) as drop-in optimizers.
 
