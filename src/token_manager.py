@@ -33,7 +33,8 @@ class TokenManager:
         self.goal = goal
         self.target = target
         self.device = device
-        self.suffix_len = suffix_ids.shape[0]
+        # suffix_ids may be [L] or [1, L]
+        self.suffix_len = suffix_ids.shape[-1]
 
         # ---------------------------------------------------------
         # 1. Create the chat template with a text sentinel
