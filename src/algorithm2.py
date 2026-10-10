@@ -3,6 +3,7 @@ from torch import Tensor
 from typing import List, Tuple
 from tqdm import trange
 
+from .kv_cache import PrefixCache
 from .token_manager import TokenManager
 from .algorithm1 import (
     compute_token_gradient,
@@ -23,6 +24,7 @@ def run_universal_gcg(
     mini_batch_size: int = 32,
     num_prompts_start: int = 1,
     prompt_add_interval: int = 50,
+    use_kv_cache: bool = True,
     verbose: bool = True,
 ) -> Tuple[Tensor, list]:
     """
@@ -43,6 +45,10 @@ def run_universal_gcg(
     loss_history = []
     best_loss = float("inf")
     best_suffix = suffix_ids.clone()
+
+    # KV caches of the fixed prompt prefixes, built lazily and reused
+    # across steps (the prefix of each prompt never changes).
+    prefix_caches = {}
 
     iterator = trange(
         num_steps,
@@ -88,12 +94,18 @@ def run_universal_gcg(
 
         total_loss = 0.0
 
-        for tm in active_tms:
+        for tm_idx, tm in enumerate(active_tms):
+
+            if use_kv_cache and tm_idx not in prefix_caches:
+                prefix_caches[tm_idx] = PrefixCache(
+                    model, tm.before_suffix_ids
+                )
 
             grad, loss_val = compute_token_gradient(
                 model,
                 tm,
                 suffix_ids,
+                prefix_caches.get(tm_idx),
             )
 
             # Normalize each prompt's gradient
@@ -144,13 +156,14 @@ def run_universal_gcg(
             device=device,
         )
 
-        for tm in active_tms:
+        for tm_idx, tm in enumerate(active_tms):
 
             losses = evaluate_candidates(
                 model,
                 tm,
                 candidates,
                 mini_batch_size,
+                prefix_caches.get(tm_idx),
             )
 
             total_candidate_losses += losses

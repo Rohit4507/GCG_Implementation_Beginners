@@ -1,160 +1,176 @@
 """
-Run individual GCG (Algorithm 1) on a single benign prompt.
-Optimized and synchronized with the enhanced TokenManager engine.
-"""
-#for run python -m experiments.run_algorithm1
-import torch
-import matplotlib.pyplot as plt
-from transformers import AutoTokenizer, AutoModelForCausalLM
+Run per-prompt GCG (Algorithm 1) on a single goal/target pair,
+then evaluate the optimized suffix (ASR + refusal rate + perplexity).
 
-from src.config import GCGConfig
-from src.token_manager import TokenManager
+Examples:
+    # Quick debug run on a benign pair (CPU-friendly defaults)
+    python -m experiments.run_algorithm1
+
+    # Paper-scale settings on the bundled benchmark sample
+    python -m experiments.run_algorithm1 --preset paper --benchmark
+
+    # Larger model with 4-bit quantization (needs CUDA + HF access)
+    python -m experiments.run_algorithm1 --preset paper --benchmark \
+        --model Qwen/Qwen3-1.7B --load-in-4bit
+"""
+import argparse
+import json
+import os
+from datetime import datetime, timezone
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import torch
+
 from src.algorithm1 import run_gcg
+from src.config import GCGConfig
+from src.data import load_benchmark_pairs
+from src.defense import defense_experiment
+from src.evaluate import evaluate_pairs, suffix_perplexity
+from src.model import init_suffix_ids, load_model_and_tokenizer, resolve_device
+from src.token_manager import TokenManager
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="GCG Algorithm 1 (individual attack)")
+    p.add_argument("--preset", default="debug", choices=["debug", "paper"])
+    p.add_argument("--model", default=None, help="HF model id (overrides config)")
+    p.add_argument("--benchmark", action="store_true",
+                   help="Use benchmark goal/target pairs instead of benign ones")
+    p.add_argument("--data", default=None, help="jsonl file with goal/target pairs")
+    p.add_argument("--pair-index", type=int, default=0, help="Which pair to attack")
+    p.add_argument("--steps", type=int, default=None)
+    p.add_argument("--device", default="auto")
+    p.add_argument("--load-in-4bit", action="store_true")
+    p.add_argument("--no-kv-cache", action="store_true")
+    p.add_argument("--max-new-tokens", type=int, default=128)
+    p.add_argument("--tiny", action="store_true",
+                   help="Use the tiny offline model (no HF download needed)")
+    return p.parse_args()
 
 
 def main():
-    cfg = GCGConfig()
+    args = parse_args()
+    cfg = GCGConfig(preset=args.preset)
+    if args.model:
+        cfg.model_id = args.model
+    if args.steps:
+        cfg.num_steps = args.steps
+    cfg.load_in_4bit = args.load_in_4bit
+    cfg.use_kv_cache = not args.no_kv_cache
     torch.manual_seed(cfg.seed)
 
-    # ---- Load model ----
-    dtype_map = {
-        "float16": torch.float16,
-        "bfloat16": torch.bfloat16,
-        "float32": torch.float32,
-    }
-    torch_dtype = dtype_map[cfg.dtype]
+    # ---- Data ----
+    if args.benchmark:
+        goals, targets = load_benchmark_pairs(n=cfg.num_eval_prompts)
+    elif args.data:
+        from src.data import load_pairs
+        goals, targets = load_pairs(args.data)
+    else:
+        goals, targets = cfg.goals, cfg.targets
 
-    print(f"Loading {cfg.model_id} ...")
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model_id)
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg.model_id, 
-        dtype=torch_dtype
-    ).to(cfg.device)
-    model.eval()
+    goal, target = goals[args.pair_index], targets[args.pair_index]
 
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    # ---- Initialize suffix ----
-    suffix_ids = tokenizer(
-        cfg.suffix_init,
-        return_tensors="pt",
-        add_special_tokens=False,
-    ).input_ids.squeeze(0).to(cfg.device)
-
-    # Truncate or pad to exact suffix_length safely
-    if suffix_ids.shape[0] > cfg.suffix_length:
-        suffix_ids = suffix_ids[:cfg.suffix_length]
-    elif suffix_ids.shape[0] < cfg.suffix_length:
-        pad_id = tokenizer.encode("!", add_special_tokens=False)[0]
-        padding = torch.full(
-            (cfg.suffix_length - suffix_ids.shape[0],),
-            pad_id,
-            device=cfg.device,
-            dtype=suffix_ids.dtype,
+    # ---- Model ----
+    if args.tiny:
+        from src.tiny_model import build_tiny_model_and_tokenizer
+        print("Building tiny offline model (random weights) ...")
+        model, tokenizer = build_tiny_model_and_tokenizer(
+            goals=goals, targets=targets, seed=cfg.seed,
         )
-        suffix_ids = torch.cat([suffix_ids, padding])
+        device = "cpu"
+    else:
+        print(f"Loading {cfg.model_id} ...")
+        model, tokenizer = load_model_and_tokenizer(
+            cfg.model_id, cfg.dtype, args.device, cfg.load_in_4bit,
+        )
+        device = resolve_device(args.device)
 
-    print(f"Initial suffix ({suffix_ids.shape[0]} tokens):")
-    print(repr(tokenizer.decode(suffix_ids)))
-    print()
+    suffix_ids = init_suffix_ids(
+        tokenizer, cfg.suffix_init, cfg.suffix_length, device,
+    )
+    print(f"Initial suffix ({suffix_ids.shape[0]} tokens): {tokenizer.decode(suffix_ids)!r}")
+    print(f"Goal:   {goal}\nTarget: {target!r}\n")
 
-    # ---- Run GCG ----
-    goal = cfg.goals[0]
-    target = cfg.targets[0]
-
-    print(f"Goal:   {goal}")
-    print(f"Target: {target}")
-    print()
-
+    # ---- Optimize (Algorithm 1) ----
     best_suffix, loss_history = run_gcg(
-        model=model,
-        tokenizer=tokenizer,
-        goal=goal,
-        target=target,
-        suffix_ids=suffix_ids,
+        model, tokenizer, goal, target, suffix_ids,
         num_steps=cfg.num_steps,
         topk=cfg.topk,
         search_width=cfg.search_width,
+        mini_batch_size=cfg.mini_batch_size,
+        use_kv_cache=cfg.use_kv_cache,
+    )
+    suffix_text = tokenizer.decode(best_suffix, skip_special_tokens=True)
+    print(f"\nOptimized suffix: {suffix_text!r}")
+
+    # ---- Evaluate on ALL available pairs (in-domain + generalization) ----
+    eval_goals, eval_targets = goals, targets
+    eval_result = evaluate_pairs(
+        model, tokenizer, eval_goals, eval_targets, best_suffix,
+        max_new_tokens=args.max_new_tokens,
+        temperature=cfg.temperature,
+        device=device,
     )
 
-    # ---- Results ----
-    print("\n" + "=" * 60)
-    print("Optimized suffix:")
-    print(repr(tokenizer.decode(best_suffix)))
-
-    # ---- Generate ----
-    #from token_manager import TokenManager
-
-    # FIX: Casting device parameter explicitly as a string representation block
-    tm = TokenManager(
-        tokenizer=tokenizer, 
-        goal=goal, 
-        target=target, 
-        suffix_ids=best_suffix, 
-        device=str(cfg.device)
+    # ---- Perplexity diagnostic + defense baseline ----
+    tm = TokenManager(tokenizer, goal, target, best_suffix, device)
+    ppl_optimized = suffix_perplexity(model, tm, best_suffix)
+    defense = defense_experiment(
+        model, tokenizer, goal, target, best_suffix, device,
     )
-    prompt_ids = tm.build_prompt_ids(best_suffix)
 
-    print("\nFull prompt sent to model:")
-    print(tokenizer.decode(prompt_ids[0]))
-    print()
+    # ---- Persist artifacts ----
+    os.makedirs("results/plots", exist_ok=True)
+    os.makedirs("results/reports/generated", exist_ok=True)
 
-    # Setup hyperparameter configuration flags cleanly for greedy execution
-    gen_kwargs = {
-        "max_new_tokens": cfg.max_new_tokens,
-        "pad_token_id": tokenizer.eos_token_id,
-    }
-    if cfg.temperature > 0:
-        gen_kwargs["do_sample"] = True
-        gen_kwargs["temperature"] = cfg.temperature
-    else:
-        gen_kwargs["do_sample"] = False  # Pure greedy parsing protocol
-
-    #with torch.no_grad():
-    #    output_ids = model.generate(prompt_ids, **gen_kwargs)
-
-    #attention_mask = torch.ones_like(prompt_ids)
-
-    attention_mask = torch.ones_like(prompt_ids)
-
-    with torch.no_grad():
-        output_ids = model.generate(
-            input_ids=prompt_ids,
-            attention_mask=attention_mask,
-            **gen_kwargs,
-        )
-
-    response = tokenizer.decode(
-        output_ids[0][prompt_ids.shape[1]:],
-        skip_special_tokens=True,
-    )
-    print("Model response:")
-    print(response)
-
-    # ---- Plot loss curve ----
-    plt.figure(figsize=(10, 4))
-    plt.plot(
-        loss_history,
-        label="Cross-Entropy Target Loss",
-        color="crimson",
-    )
-    plt.xlabel("Optimization Step")
-    plt.ylabel("Loss Matrix Value")
-    plt.title("GCG Optimization — Individual Attack Execution Curve")
-    plt.grid(True, linestyle="--", alpha=0.6)
-    plt.legend()
+    plt.figure(figsize=(8, 3.5))
+    plt.plot(range(1, len(loss_history) + 1), loss_history)
+    plt.xlabel("Step")
+    plt.ylabel("Target cross-entropy")
+    plt.title(f"GCG Algorithm 1 — {cfg.model_id} ({args.preset})")
     plt.tight_layout()
+    plt.savefig("results/plots/loss_individual.png", dpi=150)
+    print("Saved plot to results/plots/loss_individual.png")
 
-    plt.savefig(
-        "results/plots/loss_individual.png",
-        dpi=150,
-    )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run = {
+        "model_id": cfg.model_id,
+        "preset": args.preset,
+        "seed": cfg.seed,
+        "num_steps": cfg.num_steps,
+        "suffix_length": cfg.suffix_length,
+        "topk": cfg.topk,
+        "search_width": cfg.search_width,
+        "use_kv_cache": cfg.use_kv_cache,
+        "goal": goal,
+        "target": target,
+        "initial_suffix": cfg.suffix_init,
+        "optimized_suffix": suffix_text,
+        "loss_first": loss_history[0] if loss_history else None,
+        "loss_last": loss_history[-1] if loss_history else None,
+        "suffix_perplexity": ppl_optimized,
+        "defense": defense,
+        "evaluation": eval_result,
+    }
+    json_path = f"results/reports/generated/algorithm1_{stamp}.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(run, f, indent=2)
+    print(f"Saved run record to {json_path}")
 
-    plt.close()
+    # Console summary
+    s = eval_result["summary"]
+    print("\n" + "=" * 60)
+    print(f"ASR (prefix match): {s['asr_prefix_match']:.0%} "
+          f"over {s['n_pairs']} pairs | refusal rate: {s['refusal_rate']:.0%}")
+    print(f"Suffix perplexity: {ppl_optimized:.1f} "
+          f"(defense threshold {defense['threshold']:.1f})")
+    for i, sample in enumerate(eval_result["samples"]):
+        print(f"\n--- Pair {i}: {sample['goal']} ---")
+        print(f"  success={sample['success']} refusal={sample['refusal']}")
+        print(f"  output: {sample['response'][:160]!r}")
 
-    print("\nLoss plot saved to results/plots/loss_individual.png")
 
 if __name__ == "__main__":
     main()

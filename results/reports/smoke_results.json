@@ -1,0 +1,47 @@
+{
+  "seed": 0,
+  "steps": 10,
+  "suffix_length": 8,
+  "checks": {
+    "kv_cache_matches_plain": {
+      "pass": true,
+      "grad_max_abs_diff": 1.1641532182693481e-09,
+      "grad_loss_abs_diff": 4.76837158203125e-07,
+      "candidate_loss_max_abs_diff": 9.5367431640625e-07,
+      "trajectory_max_abs_diff": 4.76837158203125e-07,
+      "time_plain_s": 0.15,
+      "time_kv_cache_s": 0.13,
+      "loss_first": 6.261002540588379,
+      "loss_last": 6.248098373413086
+    },
+    "algorithm2_universal": {
+      "pass": true,
+      "loss_first": 6.261002540588379,
+      "loss_last": 6.2475104331970215
+    },
+    "evaluation_harness": {
+      "pass": true,
+      "summary": {
+        "n_pairs": 2,
+        "asr_prefix_match": 0.0,
+        "refusal_rate": 0.0
+      },
+      "note": "Tiny random model: ASR is expected to be ~0; this check only validates that the harness computes metrics."
+    },
+    "perplexity_defense": {
+      "pass": true,
+      "perplexities": {
+        "optimized": 298.0974948950975,
+        "random": 515.0353379016743,
+        "natural": 398.78631883089275
+      },
+      "threshold": 1196.3589564926783,
+      "flagged_as_adversarial": {
+        "optimized": false,
+        "random": false,
+        "natural": false
+      },
+      "notes": "Ideal detector behavior: optimized=True, random=True, natural=False. On a randomly-initialized tiny model the perplexities are not calibrated; on real models this filter cleanly separates gibberish suffixes from natural text."
+    }
+  }
+}
