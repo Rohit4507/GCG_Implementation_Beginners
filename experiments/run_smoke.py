@@ -275,6 +275,43 @@ def main():
           f"({'PASS' if tr_ok else 'FAIL'})")
 
     # ------------------------------------------------------------------
+    # 7. PAIR: black-box, LLM-driven iterative refinement (no gradients)
+    # ------------------------------------------------------------------
+    from src.pair import run_pair
+
+    PAIR_STREAMS, PAIR_ITERS = 2, 2
+    torch.manual_seed(SEED)
+    pair_goal, pair_target = benign_goals[0], benign_targets[0]
+    best_prompt, pair_streams = run_pair(
+        model, tokenizer, pair_goal, pair_target,
+        n_streams=PAIR_STREAMS, n_iterations=PAIR_ITERS,
+        judge="keyword", max_new_tokens_attacker=24, max_new_tokens_target=16,
+        device=device, seed=SEED, verbose=False,
+    )
+    pair_ok = (
+        isinstance(best_prompt, str) and len(best_prompt) > 0
+        and len(pair_streams) == PAIR_STREAMS
+        and all(1 <= len(stream) <= PAIR_ITERS for stream in pair_streams)
+        and all(
+            isinstance(r["score"], int) and 1 <= r["score"] <= 10
+            for stream in pair_streams for r in stream
+        )
+    )
+    results["checks"]["pair_blackbox_refinement"] = {
+        "pass": pair_ok,
+        "n_streams": PAIR_STREAMS,
+        "n_iterations": PAIR_ITERS,
+        "best_prompt": best_prompt,
+        "note": ("Tiny random model + untrained tokenizer cannot produce "
+                 "valid attacker JSON, so this mainly validates that the "
+                 "chat loop, attacker-output parsing fallback, and keyword "
+                 "judge all run end-to-end without crashing."),
+    }
+    print(f"[7] PAIR black-box refinement: {PAIR_STREAMS} streams x "
+          f"{PAIR_ITERS} iters, best_prompt={best_prompt[:40]!r} "
+          f"({'PASS' if pair_ok else 'FAIL'})")
+
+    # ------------------------------------------------------------------
     # Write machine-readable results
     # ------------------------------------------------------------------
     out_json = os.path.join(REPORTS_DIR, "smoke_results.json")

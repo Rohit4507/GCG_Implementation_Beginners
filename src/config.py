@@ -121,3 +121,106 @@ class GCGConfig:
             "bfloat16": torch.bfloat16,
             "float32": torch.float32,
         }[self.dtype]
+
+
+# ---------------------------------------------------------------------------
+# PAIR configuration
+#
+# PAIR (black-box, LLM-driven iterative refinement) has nothing to do with
+# suffixes/top-k/search-width, so it gets its own small config instead of
+# overloading GCGConfig with unrelated fields. Same "debug"/"paper" preset
+# convention as GCGConfig, scaled to what's reasonable on CPU vs. a real run.
+# ---------------------------------------------------------------------------
+
+PAIR_DEBUG_DEFAULTS = {
+    "n_streams": 2,
+    "n_iterations": 2,
+    "max_new_tokens_attacker": 128,
+    "max_new_tokens_target": 64,
+}
+
+# Paper's headline number is "twenty queries" (e.g. 20 streams x ~3-5
+# iterations with early stopping). We keep the per-run query budget similar
+# in spirit while staying runnable without a GPU cluster.
+PAIR_PAPER_DEFAULTS = {
+    "n_streams": 5,
+    "n_iterations": 5,
+    "max_new_tokens_attacker": 256,
+    "max_new_tokens_target": 150,
+}
+
+
+@dataclass
+class PAIRConfig:
+    # ---------- run mode ----------
+    preset: str = "debug"  # "debug" | "paper"
+
+    # ---------- models ----------
+    model_id: str = "HuggingFaceTB/SmolLM2-360M-Instruct"  # target model
+    attacker_model_id: Optional[str] = None  # defaults to model_id if None
+    judge_model_id: Optional[str] = None     # only used when judge == "model"
+    dtype: str = "float16"
+    device: str = "auto"
+    load_in_4bit: bool = False
+
+    # ---------- algorithm ----------
+    n_streams: int = PAIR_DEBUG_DEFAULTS["n_streams"]
+    n_iterations: int = PAIR_DEBUG_DEFAULTS["n_iterations"]
+    max_new_tokens_attacker: int = PAIR_DEBUG_DEFAULTS["max_new_tokens_attacker"]
+    max_new_tokens_target: int = PAIR_DEBUG_DEFAULTS["max_new_tokens_target"]
+    temperature_attacker: float = 1.0  # attacker should explore -> sample
+    temperature_target: float = 0.0    # target should be deterministic -> greedy
+    judge: str = "keyword"             # "keyword" (offline heuristic) | "model"
+    early_stop_score: int = 10
+
+    # ---------- data ----------
+    data_path: Optional[str] = None
+    num_eval_prompts: int = 4
+
+    # ---------- benign default goal/target pairs ----------
+    goals: List[str] = field(default_factory=lambda: [
+        "Write a poem about nature",
+        "Explain how photosynthesis works",
+        "Describe the water cycle",
+        "Tell me about the solar system",
+    ])
+    targets: List[str] = field(default_factory=lambda: [
+        "Sure, here is a poem about nature:\n\n",
+        "Sure, here is an explanation of photosynthesis:\n\n",
+        "Sure, here is a description of the water cycle:\n\n",
+        "Sure, here is information about the solar system:\n\n",
+    ])
+
+    seed: int = 42
+
+    def __post_init__(self):
+        if self.preset not in ("debug", "paper"):
+            raise ValueError(f"Unknown preset {self.preset!r}; use 'debug' or 'paper'")
+        if self.judge not in ("keyword", "model"):
+            raise ValueError(f"Unknown judge {self.judge!r}; use 'keyword' or 'model'")
+
+        if self.preset == "paper":
+            for key, value in PAIR_PAPER_DEFAULTS.items():
+                if getattr(self, key) == PAIR_DEBUG_DEFAULTS[key]:
+                    setattr(self, key, value)
+
+        if len(self.goals) != len(self.targets):
+            raise ValueError("goals and targets must have the same length")
+
+    # ---------- helpers ----------
+    def resolved_device(self) -> str:
+        if self.device != "auto":
+            return self.device
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    def resolved_dtype(self):
+        import torch
+        device = self.resolved_device()
+        if device == "cpu" and self.dtype == "float16":
+            return torch.float32
+        return {
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "float32": torch.float32,
+        }[self.dtype]
