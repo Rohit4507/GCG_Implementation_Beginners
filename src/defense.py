@@ -86,7 +86,10 @@ def defense_experiment(
         "notes": (
             "Ideal detector behavior: optimized=True, random=True, natural=False. "
             "On a randomly-initialized tiny model the perplexities are not "
-            "calibrated; on real models this filter cleanly separates "
-            "gibberish suffixes from natural text."
+            "calibrated, so the verdicts below are not meaningful. Whether a "
+            "perplexity threshold separates optimized gibberish suffixes from "
+            "natural text on real aligned models is an untested hypothesis "
+            "(cf. 'smooth-LLM' style defenses, which specifically defeat it) - "
+            "it must be measured, not assumed."
         ),
     }

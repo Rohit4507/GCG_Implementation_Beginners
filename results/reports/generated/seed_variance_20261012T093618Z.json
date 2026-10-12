@@ -1,0 +1,81 @@
+{
+  "model": "tiny(offline, random weights)",
+  "num_seeds": 10,
+  "steps": 10,
+  "search_width": 16,
+  "topk": 8,
+  "mean_gcg_loss": 6.236169862747192,
+  "mean_random_loss": 6.24362268447876,
+  "mean_paired_diff_nats": 0.007452821731567383,
+  "sd_paired_diff": 0.002080383902204882,
+  "standard_error": 0.0006578751538516416,
+  "ci95": [
+    0.00596470813355497,
+    0.008940935329579796
+  ],
+  "gcg_wins": 10,
+  "relative_gap_pct": 0.11936694621368797,
+  "per_seed": [
+    {
+      "seed": 0,
+      "gcg_loss": 6.252016067504883,
+      "random_loss": 6.259160995483398,
+      "diff_random_minus_gcg": 0.007144927978515625
+    },
+    {
+      "seed": 1,
+      "gcg_loss": 6.254337787628174,
+      "random_loss": 6.25927209854126,
+      "diff_random_minus_gcg": 0.0049343109130859375
+    },
+    {
+      "seed": 2,
+      "gcg_loss": 6.219394683837891,
+      "random_loss": 6.230712413787842,
+      "diff_random_minus_gcg": 0.011317729949951172
+    },
+    {
+      "seed": 3,
+      "gcg_loss": 6.232030868530273,
+      "random_loss": 6.239274501800537,
+      "diff_random_minus_gcg": 0.007243633270263672
+    },
+    {
+      "seed": 4,
+      "gcg_loss": 6.220180511474609,
+      "random_loss": 6.227697372436523,
+      "diff_random_minus_gcg": 0.0075168609619140625
+    },
+    {
+      "seed": 5,
+      "gcg_loss": 6.2576494216918945,
+      "random_loss": 6.264520645141602,
+      "diff_random_minus_gcg": 0.006871223449707031
+    },
+    {
+      "seed": 6,
+      "gcg_loss": 6.227567672729492,
+      "random_loss": 6.235239028930664,
+      "diff_random_minus_gcg": 0.007671356201171875
+    },
+    {
+      "seed": 7,
+      "gcg_loss": 6.289638996124268,
+      "random_loss": 6.299790382385254,
+      "diff_random_minus_gcg": 0.010151386260986328
+    },
+    {
+      "seed": 8,
+      "gcg_loss": 6.130354404449463,
+      "random_loss": 6.134668350219727,
+      "diff_random_minus_gcg": 0.004313945770263672
+    },
+    {
+      "seed": 9,
+      "gcg_loss": 6.278528213500977,
+      "random_loss": 6.285891056060791,
+      "diff_random_minus_gcg": 0.007362842559814453
+    }
+  ],
+  "note": "On random weights this measures optimizer direction only. Attack success requires a real aligned model and the ASR harness."
+}
