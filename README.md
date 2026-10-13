@@ -1,115 +1,127 @@
 # GCG from Scratch — Greedy Coordinate Gradient Attacks for Learning & Research
 
-A beginner-friendly, from-scratch implementation of **GCG** (*Greedy Coordinate
-Gradient*), the jailbreak attack from
+A from-scratch implementation of **GCG** (*Greedy Coordinate Gradient*), the
+jailbreak attack from
 [*Universal and Transferable Adversarial Attacks on Aligned Language Models*
-(Zou et al., 2023)](https://arxiv.org/abs/2307.15043) — built to actually *understand*
-what happens under the hood, not just call a library.
+(Zou et al., 2023)](https://arxiv.org/abs/2307.15043), plus its black-box
+counterpart **PAIR** — built to understand what happens under the hood, not to
+call a library.
 
-> **Why this matters for alignment:** GCG shows that aligned LLMs fail *structurally*
-> under adversarial suffixes — a single gibberish suffix can transfer across prompts
-> and models. Studying the attack is a prerequisite for building defenses.
+> **Why this is alignment-relevant:** GCG shows that refusal behaviour in
+> aligned models is not a robust property — a short token block can move the
+> model off it, and that block transfers. Defending against the attack requires
+> being able to run it.
 
-**Status:** ✅ full pipeline implemented & validated offline · 🧪 paper-scale
-benchmark runs on real aligned models are the next step (needs GPU + HF access)
+**Status:** ✅ harness complete and validated · ⏳ **no real-model attack run yet**
 
-> ### ⚠️ Evidential status of everything below (read this first)
->
-> Two different claims live in this repo and they must not be confused:
->
-> | Claim | Status |
-> |---|---|
-> | The GCG / PAIR / baseline / transfer / defense *code paths are numerically correct* | ✅ **Proven** — smoke test 7/7, KV-cache equivalence to ~1e-9 |
-> | *Attacks actually work on aligned models* (ASR, transfer, cost-per-success) | ❌ **Not tested** — every recorded run uses a 2-layer randomly-initialised model, whose weights cannot be jailbroken |
->
-> **No jailbreak has ever succeeded in this repository.** Every ASR figure in
-> `results/` is 0% and that is expected, not a result: a random-weight model has
-> no refusal behaviour to break. The comparative numbers below (e.g. "GCG beats
-> random search") measure whether the *optimiser* moves the loss in the right
-> direction, not whether an attack transfers. Real-model runs, per-attack cost
-> accounting, a multi-turn variant and a HarmBench-compatible judge are all
-> **not implemented yet** — see [`AUDIT.md`](AUDIT.md) for the full gap list
-> against the research plan this repo is part of.
+---
+
+## Read this before trusting any number below
+
+| Claim | Status |
+|---|---|
+| The GCG / PAIR / baseline / transfer / defence code paths are numerically correct | ✅ **Verified** — smoke test 7/7, KV-cache equal to full forward to ~1e-9 |
+| *Attacks work on aligned models* (ASR, transfer, cost per success) | ❌ **Not tested** — every recorded run is on a 2-layer randomly-initialised model, which has no refusal behaviour to bypass |
+
+**No jailbreak has succeeded in this repository.** Every ASR in `results/` is
+0%, and that is expected rather than a finding: a random-weight model cannot be
+jailbroken. Run records now label this explicitly (`model_kind: tiny_random`,
+`random_weights: true`) and print the `ln(vocab)` loss floor next to the loss
+curve, because a loss sitting at that floor is a precise statement that the
+optimiser achieved nothing.
+
+Two consequences worth stating plainly:
+
+* A comparison like "GCG beats random search" in this repo measures whether the
+  *optimiser* moves the loss in the right direction. It is not a jailbreak result.
+* The results table below is empty of real-model numbers **by intention**, not
+  by omission. See [`DESIGN.md`](DESIGN.md) for how each module works and
+  [`kaggle/`](kaggle/) for how the real runs are executed on free-tier GPU.
+
+---
 
 ## What's implemented
 
-- **Algorithm 1 — per-prompt attack** (`src/algorithm1.py`): one-hot gradient proxy,
-  top-k candidate substitutions, vectorized random mutations, mini-batched scoring,
-  greedy update — with a **KV-cache** for the fixed prompt prefix.
+- **Algorithm 1 — per-prompt attack** (`src/algorithm1.py`): one-hot gradient
+  proxy → top-k candidate substitutions → vectorised single-token mutations →
+  re-tokenisation filter → mini-batched scoring → greedy update, with a
+  **KV-cache** for the fixed prompt prefix.
 - **Algorithm 2 — universal attack** (`src/algorithm2.py`): one suffix for many
-  prompts, progressive prompt schedule, per-prompt gradient normalization,
-  held-out generalization eval.
+  prompts, per-prompt gradient normalisation, **progressive prompt schedule**,
+  held-out generalisation evaluation.
+- **Multi-turn attack** (`src/multiturn.py`, `experiments/run_multiturn.py`):
+  scripted escalation conversation built from the model's own replies, with the
+  suffix optimised against the goal as the final user turn; reports single-turn
+  vs multi-turn ASR side by side. Limitations are documented in the module.
 - **Evaluation harness** (`src/evaluate.py`): paper-style **prefix-match ASR**,
-  refusal-rate heuristic, greedy/sampled generation.
-- **Defense baseline** (`src/defense.py`): perplexity-based detection of adversarial
-  suffixes (optimized vs. random vs. natural-language controls).
-- **Baselines** (`src/baselines.py`, `experiments/run_baselines.py`): gradient-blind
-  **random search** with the identical mutation budget — isolates the value of the
-  gradient signal. Measured across 10 seeds with
-  `experiments/run_seed_variance.py`: GCG wins 10/10, but by only +0.0075 nats
-  (0.12% of the loss value) — a working optimiser, not a working jailbreak.
-- **Cross-model transfer** (`experiments/run_transfer.py`): optimize on model A,
-  carry the suffix over as *text*, re-tokenize for model B, and measure transfer ASR
-  vs. unoptimized and direct-optimization bounds — the paper's headline experiment.
-  *(Harness only: exercised tiny→tiny, no real-model transfer numbers yet.)*
-- **PAIR — black-box baseline** (`src/pair.py`, `experiments/run_pair.py`): the
-  non-gradient counterpart to GCG — [Chao et al., 2023](https://arxiv.org/abs/2310.08419),
-  *Jailbreaking Black Box Large Language Models in Twenty Queries*. An attacker LLM
-  iteratively rewrites a natural-language jailbreak prompt using the target's own
-  responses and a judge score as feedback (multiple parallel refinement "streams",
-  early stopping on a perfect score). Reuses the GCG harness end to end (generation,
-  prefix-match ASR, refusal heuristic, perplexity) so the two attack families —
-  white-box/gradient vs. black-box/LLM-refinement — are directly comparable, including
-  the fact that PAIR's natural-language prompts read as ordinary text (low perplexity)
-  where GCG's optimized suffixes read as gibberish (high perplexity, §defense baseline).
-- **Data** (`src/data.py`, `data/`): AdvBench-style benchmark loader with a bundled
-  offline sample; benign goal/target pairs for safe demos. Full
-  [`walledai/AdvBench`](https://huggingface.co/datasets/walledai/AdvBench) pulls
-  automatically when the hub is reachable.
-- **Offline smoke tests** (`src/tiny_model.py`, `experiments/run_smoke.py`): a tiny
-  random model + locally-trained tokenizer exercise *every* code path in seconds,
-  including a numerical proof that the KV-cache path matches the full forward
-  (max gradient diff ~1e-9).
-- **Version-robust KV-cache** (`src/kv_cache.py`): works with both transformers v4
-  and v5 cache APIs.
+  refusal-rate heuristic, generation, perplexity.
+- **Defence baseline** (`src/defense.py`): perplexity-based detection of
+  adversarial suffixes (optimised vs. random vs. natural-language controls).
+- **Baselines** (`src/baselines.py`): gradient-blind **random search** with an
+  identical mutation budget — the ablation that justifies calling this
+  gradient-guided. Measured across 10 seeds
+  (`experiments/run_seed_variance.py`): GCG wins 10/10, by +0.0075 nats, i.e.
+  **0.12% of the loss value**.
+- **Cross-model transfer** (`experiments/run_transfer.py`): optimise on model A,
+  carry the suffix over as *text*, re-tokenise for model B, compare against both
+  the unoptimised suffix and a suffix optimised directly on B.
+- **PAIR — black-box counterpart** (`src/pair.py`): an attacker LLM iteratively
+  rewrites a natural-language prompt using the target's responses and a judge
+  score as feedback. Reuses the GCG harness end to end, which is what makes the
+  perplexity contrast (GCG = gibberish, PAIR = fluent) a measurement.
+- **Run provenance & cost accounting** (`src/provenance.py`): records the model
+  that was *actually* loaded, forward-pass counts, wall-clock, seconds/step and
+  money. `cost_per_success_usd` is `None` — not `0.0` — when nothing succeeded.
+- **Offline smoke tests** (`src/tiny_model.py`, `experiments/run_smoke.py`): a
+  tiny random model plus a locally-trained tokenizer exercise every code path in
+  seconds, including a numerical proof that the KV-cache matches the full
+  forward.
 
 ## Repository structure
 
 ```
 src/
-  algorithm1.py      # per-prompt GCG (gradient → top-k → sample → score → greedy)
-  algorithm2.py      # universal/multi-prompt GCG + progressive schedule
-  token_manager.py   # chat-template layout, loss slices, re-tokenization filter
-  kv_cache.py        # KV-cache for the fixed prompt prefix
-  evaluate.py        # generation, prefix-match ASR, refusal heuristic, perplexity
-  defense.py         # perplexity-based defense baseline
-  baselines.py       # gradient-blind random-search baseline
-  pair.py            # PAIR: black-box, LLM-driven iterative refinement
-  data.py            # jsonl + AdvBench loading (offline fallback)
-  model.py           # model/tokenizer loading (incl. optional 4-bit)
-  tiny_model.py      # tiny offline model for smoke tests
-  config.py          # debug / paper presets (GCGConfig + PAIRConfig)
+  algorithm1.py        # per-prompt GCG
+  algorithm2.py        # universal / multi-prompt GCG
+  multiturn.py         # escalation conversation + single vs multi-turn comparison
+  token_manager.py     # chat-template layout, loss slices, re-tokenisation filter
+  kv_cache.py          # KV-cache for the fixed prompt prefix
+  evaluate.py          # generation, prefix-match ASR, refusal heuristic, perplexity
+  defense.py           # perplexity-based defence baseline
+  baselines.py         # gradient-blind random-search baseline
+  pair.py              # PAIR: black-box, LLM-driven refinement
+  provenance.py        # what model was really used + cost accounting
+  data.py              # AdvBench loader (HF hub, with an offline fallback)
+  model.py             # model/tokenizer loading, optional 4-bit
+  tiny_model.py        # tiny offline model for smoke tests
+  config.py            # debug / paper presets
 experiments/
-  run_smoke.py       # end-to-end pipeline validation (CPU, no downloads)
-  run_algorithm1.py  # full per-prompt experiment + artifacts
-  run_algorithm2.py  # full universal experiment + artifacts
-  run_baselines.py   # GCG vs gradient-blind random search
-  run_transfer.py    # cross-model suffix transfer
-  run_defense.py     # defense baseline experiment
-  run_pair.py        # PAIR black-box attack experiment + artifacts
-  run_seed_variance.py # GCG vs random search across N seeds (mean diff + CI)
-  check_algorithm1.py# low-level sanity checks on a real model
+  run_smoke.py         # end-to-end pipeline validation (CPU, no downloads)
+  run_algorithm1.py    # per-prompt attack + ASR + cost
+  run_algorithm2.py    # universal attack + held-out generalisation + cost
+  run_multiturn.py     # multi-turn vs single-turn comparison
+  run_baselines.py     # GCG vs random search, same budget
+  run_transfer.py      # cross-model suffix transfer
+  run_defense.py       # perplexity defence baseline
+  run_pair.py          # PAIR experiment
+  run_seed_variance.py # effect size + CI for the gradient-vs-random question
+  build_report.py      # generates docs/index.html from the run records
 data/
-  benign_pairs.jsonl       # safe demo goal/target pairs
-  advbench_sample.jsonl    # bundled AdvBench-style eval sample
+  advbench_sample.jsonl  # 30-pair offline fallback (full AdvBench pulls from the hub)
+  benign_pairs.jsonl     # safe demo pairs
+kaggle/
+  real_model_runbook.ipynb  # free-tier GPU runbook for the real experiment matrix
+  README.md            # setup, quota discipline, pitfalls
+tests/                 # 35 unit tests (metrics, provenance, multi-turn)
 results/
-  reports/           # method reports + machine-readable run records
-  plots/             # loss curves
-tests/
-  test_metrics.py    # regression tests for ASR / refusal metrics
-Dockerfile           # CPU image; `docker run` re-runs the 7-check smoke test
-LICENSE              # MIT
-AUDIT.md             # what is proven vs. untested, and the P1 gap list
+  reports/             # method reports + machine-readable run records
+  plots/               # loss curves
+docs/
+  index.html           # generated results page (GitHub Pages ready)
+DESIGN.md              # how each module works, and why it is built that way
+Dockerfile             # CPU image; `docker run` re-runs the smoke test + tests
+.github/workflows/     # CI: tests + smoke test + end-to-end runner on every push
+LICENSE                # MIT
 ```
 
 ## Quickstart
@@ -117,132 +129,203 @@ AUDIT.md             # what is proven vs. untested, and the P1 gap list
 ```bash
 pip install -r requirements.txt
 
-# 0. Containerised, reproducible version of steps 1 + tests (no GPU needed)
+# 0. Containerised version of steps 1-2 (no GPU needed)
 docker build -t gcg-scratch . && docker run --rm gcg-scratch
 
-# 1. Validate the entire pipeline offline (CPU, seconds, no downloads)
+# 1. Validate the whole pipeline offline (CPU, seconds, no downloads)
 python -m experiments.run_smoke
-python -m unittest discover -s tests      # metric regression tests
+python -m unittest discover -s tests        # 35 unit tests
 
-# 2. Tiny end-to-end demo (no HF needed)
-python -m experiments.run_seed_variance --seeds 10   # effect size + CI, ~8s
+# 2. Offline pipeline demos on the tiny random model
+python -m experiments.run_seed_variance --seeds 10     # effect size + CI, ~8s
 python -m experiments.run_algorithm1 --tiny --benchmark
-python -m experiments.run_algorithm2 --tiny --benchmark
-python -m experiments.run_baselines   --tiny --benchmark
-python -m experiments.run_transfer    --tiny --benchmark
-python -m experiments.run_defense     --tiny
-python -m experiments.run_pair        --tiny
+python -m experiments.run_algorithm2 --tiny --benchmark --held-out 2
+python -m experiments.run_multiturn  --tiny --benchmark --num-prompts 4
+python -m experiments.run_baselines  --tiny --benchmark
+python -m experiments.run_transfer   --tiny --benchmark
+python -m experiments.build_report             # rebuild docs/index.html
 
-# 3. Real experiments
-python -m experiments.run_algorithm1 --preset paper --benchmark
-python -m experiments.run_algorithm2 --preset paper --benchmark --held-out 2
-python -m experiments.run_baselines   --preset paper --benchmark
-python -m experiments.run_transfer    --preset paper --benchmark \
-    --model Qwen/Qwen3-0.6B --target-model Qwen/Qwen3-1.7B
-python -m experiments.run_defense     --preset paper --benchmark
-
-# PAIR (black-box): same model as attacker+target, or split them explicitly
-python -m experiments.run_pair --preset paper --benchmark --model <hf-id>
-python -m experiments.run_pair --preset paper --benchmark \
-    --model <target-hf-id> --attacker-model <attacker-hf-id> --judge model
-
-# ... on a bigger model (GPU recommended)
+# 3. Real runs — see kaggle/README.md for the free-tier GPU setup
 python -m experiments.run_algorithm1 --preset paper --benchmark \
-    --model Qwen/Qwen3-1.7B --load-in-4bit
+    --model Qwen/Qwen2.5-1.5B-Instruct --load-in-4bit --steps 500 --num-prompts 25
+python -m experiments.run_algorithm2 --preset paper --benchmark \
+    --model Qwen/Qwen2.5-1.5B-Instruct --load-in-4bit --steps 500 \
+    --num-prompts 25 --held-out 5
+python -m experiments.run_transfer --preset paper --benchmark --load-in-4bit \
+    --model Qwen/Qwen2.5-1.5B-Instruct \
+    --target-model HuggingFaceTB/SmolLM2-1.7B-Instruct
+python -m experiments.run_multiturn --preset paper --benchmark \
+    --model Qwen/Qwen2.5-1.5B-Instruct --load-in-4bit --steps 500 \
+    --num-prompts 10 --n-prior-turns 2
 ```
 
 Presets (`src/config.py`): `debug` (CPU-friendly) and `paper`
-(250 steps · 20-token suffix · top-k 256 · search width 512).
-Note on "the paper's values": suffix length, top-k and search width are the
-paper's; **250 steps is not** — the official
+(20-token suffix · top-k 256 · search width 512).
+
+**On "the paper's values":** suffix length, top-k and search width are the
+paper's. **250 steps is not** — the official
 [`llm-attacks`](https://github.com/llm-attacks/llm-attacks) config uses
 `n_steps = 500` for individual attacks (250 is nanoGCG's default), and the PAIR
-paper ran GCG for 500 iterations for a comparable query budget. Use `--steps 500`
-for anything you intend to compare against published ASR numbers.
-PAIR has its own `PAIRConfig` presets: `debug` (2 streams x 2 iterations) and
-`paper` (5 streams x 5 iterations, in the spirit of the paper's "twenty queries"
-budget, scaled down from its original 30-stream setting to stay CPU-runnable).
+paper ran GCG for 500 iterations for a comparable query budget. Use
+`--steps 500` for anything you intend to compare with published ASR numbers.
 
-## Pipeline validation results
+## Cost accounting
+
+"Cost per successful attack" is a number the job descriptions in this area
+actually ask for, so every runner reports it — in units that do not depend on
+which GPU you rented:
+
+| Field | Meaning |
+|---|---|
+| `gradient_forwards` | one backward pass per optimisation step |
+| `candidate_forwards` | forward passes spent scoring candidates (fewer than `steps × search_width`, because the filter drops candidates) |
+| `total_forwards`, `seconds_per_step` | hardware-independent cost |
+| `cost_per_success_usd` | money; **`null` when there were no successes**, with `undefined_reason` set |
+| `forwards_per_success` | the hardware-independent analogue |
+
+On free-tier compute pass `--gpu-rate-usd-per-hour 0.0` (the default) and compare
+`total_forwards` between runs instead. Reporting `0` for cost-per-success at 0%
+ASR would read as "attacks are free", which is the opposite of the finding.
+
+## Pipeline validation
 
 From `python -m experiments.run_smoke` (seed 0 — full record in
 `results/reports/smoke_results.json`):
 
 | Check | Result |
 |---|---|
-| KV-cache vs. full forward (gradients) | max diff **1.2e-09** ✅ |
-| KV-cache vs. full forward (candidate losses) | max diff **9.5e-07** ✅ |
-| Algorithm 1 optimization runs end-to-end | ✅ |
+| KV-cache vs. full forward (gradients) | max diff **1.4e-09** ✅ |
+| KV-cache vs. full forward (candidate losses) | max diff **4.8e-07** ✅ |
+| Algorithm 1 optimisation runs end-to-end | ✅ |
 | Algorithm 2 universal schedule (prompts ramp 1→2→3) | ✅ |
-| ASR / refusal metrics computed | ✅ (0% ASR on random weights — expected) |
-| Perplexity defense baseline (optimized/random/natural) | ✅ |
-| GCG beats random search (same budget) | ✅ directionally (see note below) |
+| Multi-turn suffix optimisation + evaluation | ✅ |
+| ASR / refusal metrics computed | ✅ (0% on random weights — expected) |
+| Perplexity defence baseline | ✅ |
+| GCG beats random search (same budget) | ✅ directionally — see below |
 | Cross-model transfer pipeline (different tokenizers) | ✅ |
-| PAIR black-box refinement loop (chat + parsing + judge, end to end) | ✅ |
+| PAIR black-box refinement loop | ✅ |
 
-**What "GCG beats random search" is worth.** The single-seed gap (6.2481 ≤ 6.2553)
-is too small to interpret on its own, so it was re-measured across 10 seeds on
-2026-10-12 with `experiments/run_seed_variance.py` (10 steps × 16 candidates,
-tiny model — small budget on purpose; `python -m experiments.run_seed_variance`).
-GCG won **10/10 seeds**, mean paired improvement **+0.0075 nats**, 95% CI ≈
-[+0.0060, +0.0090]: the gradient signal *does* help consistently, but the effect
-is **0.12% of the loss value**. That is evidence the optimiser step works as
-implemented; it is *not* evidence of a jailbreak, and no absolute-loss number
-here should ever be quoted as an attack-success rate.
+**What "GCG beats random search" is worth.** The single-seed gap (6.2481 ≤
+6.2553) is too small to interpret alone, so it was re-measured across 10 seeds
+with `experiments/run_seed_variance.py` (10 steps × 16 candidates, tiny model —
+deliberately small budget). GCG won **10/10 seeds**, mean paired improvement
+**+0.0075 nats**, 95% CI ≈ [+0.0060, +0.0090] — the gradient signal helps
+consistently, but the effect is **0.12% of the loss value**. Evidence that the
+optimiser step works as implemented. Not evidence of a jailbreak.
 
-## Reports
+## Results
 
-- [`results/reports/algorithm1_report.md`](results/reports/algorithm1_report.md) —
-  method walkthrough (math → code), evaluation protocol, defense baseline, full-scale recipe.
-- [`results/reports/algorithm2_report.md`](results/reports/algorithm2_report.md) —
-  universal attack, progressive schedule, held-out generalization.
-- [`results/reports/pair_report.md`](results/reports/pair_report.md) —
-  PAIR method walkthrough, white-box vs. black-box comparison with GCG, design
-  decisions (judges, parsing, portability), full-scale recipe.
+**Every number below is on a randomly-initialised model, and every ASR is 0%.**
+That is not a finding about aligned models — a random-weight model has no refusal
+behaviour to bypass. It is a statement about the test rig, and it is stated first
+on purpose.
+
+The full generated table, rebuilt from the JSON records on every run, is
+[`docs/index.html`](docs/index.html) (publishable as a GitHub Pages site):
+
+```bash
+python -m experiments.build_report     # regenerate from results/reports/generated/
+```
+
+To publish it as a live link: **Settings → Pages → Source: `main` / `/docs`**, and
+the page appears at `https://<user>.github.io/<repo>/`. It is regenerated from the
+run records, so it cannot drift from the data or claim more than the runs proved.
+
+### Loss curve vs. the random-guess floor
+
+The dashed line is `ln(vocab)`. A loss sitting on it means the suffix is not
+biting — which is exactly what these runs show, and why the floor is drawn on
+every plot.
+
+![Algorithm 1 loss curve against the ln(vocab) floor](results/plots/loss_individual.png)
+
+### Does the gradient help at all? 10 seeds, identical budget
+
+![GCG vs random search across 10 seeds](results/plots/seed_variance.png)
+
+GCG wins 10/10 seeds, mean paired improvement +0.0075 nats,
+95% CI ≈ [+0.0060, +0.0090] — **0.12% of the loss value**. Real, reproducible,
+and tiny. Reported at that size rather than rounded up to "GCG wins".
+
+### Multi-turn vs. single-turn, same goal
+
+![Multi-turn vs single-turn loss curves](results/plots/multiturn_loss.png)
+
+Both settings fail. The verdict string the runner writes is literally
+`"no attack succeeded in either setting; the comparison is uninformative until at
+least one side breaks the model"` — a null result stated as one.
+
+<details>
+<summary>More figures</summary>
+
+![Universal suffix loss](results/plots/loss_universal.png)
+![PAIR judge scores per stream](results/plots/pair_scores.png)
+![GCG and random search on the same budget](results/plots/baselines_loss.png)
+
+</details>
+
+### Real-model table — the template, still empty
+
+The runs that would fill this need a GPU and have not been executed yet. The
+columns are fixed in advance so the shape of the evidence is decided before the
+numbers exist:
+
+| Model | Prompts | Method | ASR | n_successes | total_forwards | Source |
+|---|---|---|---|---|---|---|
+| _pending_ | | | | | | |
+
+Every row must carry its `n`. A rate without `n` is not a result.
 
 ## Known defects & corrections
 
-- **ASR metric was lenient (fixed 2026-10-12).** `is_target_prefix_match` scored a
-  response that is merely a *prefix of the target* (e.g. `"Sure, here is a"`) as a
-  successful jailbreak, which would have inflated ASR on real models. Fixed, with
-  regression tests in `tests/test_metrics.py`. No recorded result changes (all
+- **Run records mislabelled the model (fixed).** Records wrote `cfg.model_id`
+  verbatim, so a `--tiny` run recorded itself as
+  `HuggingFaceTB/SmolLM2-360M-Instruct`. Those runs were never SmolLM2: the tiny
+  model's vocab is 512, so uniform guessing floors the loss at `ln(512) = 6.238`
+  and every recorded loss sat at ~6.25, whereas a real SmolLM2 (vocab ~49k)
+  floors at ~10.8. `src/provenance.py` now records the model actually loaded, and
+  `tests/test_provenance.py` pins it.
+- **ASR metric was lenient (fixed).** `is_target_prefix_match` scored a response
+  that is merely a *prefix of the target* (e.g. `"Sure, here is a"`) as a
+  successful jailbreak, which would inflate ASR on real models. Fixed, with
+  regression tests in `tests/test_metrics.py`. No recorded result changed (all
   ASR was already 0%).
-- **`paper` preset runs 250 steps, the official `llm-attacks` config uses 500**
-  for individual attacks. Use `--steps 500` for numbers you intend to compare
-  with published results.
-- **The refusal metric is a regex heuristic** and has at least one known false
-  positive (a partial answer that opens with a refusal phrase). Cross-check with a
-  judge model before publishing any refusal-rate number.
-- **The perplexity defense is unvalidated on real models.** Smooth-LLM-style
-  attacks were designed specifically to defeat it.
-- See [`AUDIT.md`](AUDIT.md) for the full list.
+- **`paper` preset runs 250 steps; the official config uses 500.** Use
+  `--steps 500` for published-comparable numbers.
+- **`run_transfer.py` had no `--load-in-4bit`** — a 7–8B source model silently
+  would not fit a 16GB card, which blocked the transfer experiment. Added.
+- **The refusal metric is a regex heuristic** with at least one documented false
+  positive (a partial answer opening with a refusal phrase). Cross-check with a
+  judge model before publishing a refusal rate.
+- **The perplexity defence is unvalidated on real models.** Smooth-LLM-style
+  attacks were designed specifically to defeat it; the original comment claiming
+  it "cleanly separates" gibberish was unsupported and is now a hypothesis.
 
-## Roadmap (a.k.a. what to do next)
+## Roadmap
 
-- [ ] Paper-scale runs on real aligned models; fill the ASR table (GPU).
-- [ ] Cost/query accounting per successful attack (queries, steps, wall-clock, $).
-- [ ] Multi-turn (3-turn) GCG variant — required by the research plan, not built.
-- [ ] HarmBench-compatible judge + dataset loader (currently AdvBench only).
-- [x] Cross-model transfer harness (suffix → text → re-tokenize on target).
-- [x] Random-search baseline + GCG comparison (`run_baselines.py`).
-- [ ] Benchmark cross-model transfer on real models (SmolLM2 → Qwen, GPU).
-- [x] Ablations infrastructure (grad normalization ablation TODO in code).
-- [ ] Stronger defenses: smooth-perplexity, windowed PPL; compare detection rates.
-- [ ] GCG variants (MMA, Faster-GCG) as drop-in optimizers.
-- [x] PAIR — black-box, LLM-driven iterative refinement baseline (white-box vs.
-      black-box comparison; needs a real instruction-tuned attacker to be meaningful).
-- [ ] Paper-scale PAIR runs with a capable attacker (e.g. Vicuna/GPT-class) + ASR table.
+- [ ] Paper-scale runs on real aligned models; fill the results table (GPU).
+- [x] Cost/query accounting per run, with honest handling of 0 successes.
+- [x] Multi-turn (3-turn) attack variant.
+- [x] Run provenance that records the model actually loaded.
+- [x] Transfer runner supports 4-bit for both models.
+- [x] Offline benchmark fallback extended to 30 pairs.
+- [ ] HarmBench-compatible judge + dataset (currently AdvBench + a keyword judge).
+- [ ] Stronger defences: smooth-perplexity, windowed PPL; compare detection rates.
+- [ ] GCG variants (MMA, Faster-GCG) as drop-in optimisers.
+- [ ] Goal-conditioned escalation scripts for the multi-turn attack.
 
 ## References
 
 - Zou et al., 2023 — [arXiv:2307.15043](https://arxiv.org/abs/2307.15043)
 - Chao et al., 2023 — [PAIR, arXiv:2310.08419](https://arxiv.org/abs/2310.08419)
-- Pulfer, 2025 — [GCG: Adversarial Attacks on Large Language Models](https://medium.com/@brianpulfer/gcg-adversarial-attacks-on-large-language-models-61f8b51734e9)
 - Mazeika et al., 2024 — [HarmBench, arXiv:2402.04249](https://arxiv.org/abs/2402.04249)
-- [llm-attacks](https://github.com/llm-attacks/llm-attacks) · [nanoGCG](https://github.com/GraySwanAI/nanoGCG) · [PAIR (official)](https://github.com/patrickrchao/JailbreakingLLMs)
+- [llm-attacks](https://github.com/llm-attacks/llm-attacks) ·
+  [nanoGCG](https://github.com/GraySwanAI/nanoGCG) ·
+  [PAIR (official)](https://github.com/patrickrchao/JailbreakingLLMs)
 
 ## Responsible use
 
-This project exists to **understand and harden** aligned models. Default configs use
-benign goals; the bundled benchmark strings are standard red-team evaluation data.
+This project exists to **understand and harden** aligned models. Default configs
+use benign goals; the bundled benchmark strings are standard red-team evaluation
+data (AdvBench-style). Use it only against models you are authorised to test.
 Don't use this material to cause harm.

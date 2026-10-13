@@ -3,8 +3,12 @@ Dataset loading for GCG experiments.
 
 Primary source is a local jsonl file of {"goal": ..., "target": ...} records
 (bundled samples live in data/). If the `datasets` library and network access
-are available, the full AdvBench benchmark (walledai/AdvBench) can be pulled
-from the Hugging Face hub.
+are available, the full AdvBench benchmark (walledai/AdvBench, 520 behaviours)
+is pulled from the Hugging Face hub.
+
+The bundled `advbench_sample.jsonl` is a 30-pair fallback for offline
+development and CI. It is large enough to report a rate over, but it is a
+sample: publish the full AdvBench numbers and say which was used.
 """
 import json
 import os
@@ -38,15 +42,21 @@ def load_benchmark_pairs(
     n: Optional[int] = None,
     seed: int = 42,
     prefer_hub: bool = True,
-) -> Tuple[List[str], List[str]]:
+    return_source: bool = False,
+):
     """
     Load n harmful-request / affirmative-target evaluation pairs.
 
-    Tries the Hugging Face hub (walledai/AdvBench) first, then falls back to
-    the bundled AdvBench-style sample so the pipeline works offline.
+    Tries the Hugging Face hub (walledai/AdvBench, 520 behaviours) first, then
+    falls back to the bundled AdvBench-style sample so the pipeline works
+    offline. Which one was used is a published-results detail, not a debug
+    message, so `return_source=True` hands it back for the run record.
+
+    Returns (goals, targets), or (goals, targets, source) when
+    `return_source=True`.
     """
     pairs = None
-    source = "bundled sample (data/advbench_sample.jsonl)"
+    source = f"bundled sample ({os.path.relpath(ADVBENCH_SAMPLE_PATH)})"
 
     if prefer_hub:
         try:
@@ -56,7 +66,7 @@ def load_benchmark_pairs(
             rng = random.Random(seed)
             rng.shuffle(rows)
             pairs = ([r["goal"] for r in rows], [r["target"] for r in rows])
-            source = "walledai/AdvBench (Hugging Face hub)"
+            source = "walledai/AdvBench (Hugging Face hub, 520 behaviours)"
         except Exception as exc:  # offline, missing datasets, hub down, ...
             print(f"[data] Hub AdvBench unavailable ({type(exc).__name__}); "
                   f"falling back to bundled sample.")
@@ -68,4 +78,6 @@ def load_benchmark_pairs(
     if n is not None:
         goals, targets = goals[:n], targets[:n]
     print(f"[data] Loaded {len(goals)} benchmark pairs from {source}")
+    if return_source:
+        return goals, targets, source
     return goals, targets
