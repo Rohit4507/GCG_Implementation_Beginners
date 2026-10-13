@@ -13,10 +13,12 @@ Pipeline per step:
 With `use_kv_cache=True` the fixed prompt prefix is forwarded once (see
 kv_cache.PrefixCache) and reused every step.
 """
+import time
+from typing import Optional, Tuple
+
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from typing import Optional, Tuple
 
 from tqdm import trange
 
@@ -199,11 +201,19 @@ def run_gcg(
     mini_batch_size: int = 64,
     use_kv_cache: bool = True,
     verbose: bool = True,
+    stats_out: Optional[dict] = None,
+    prior_turns: Optional[list] = None,
 ) -> Tuple[Tensor, list]:
     """
     Full Algorithm 1 execution loop.
 
     Returns (best_suffix_ids, loss_history).
+
+    If `stats_out` is a dict, it is filled in with the run's real compute
+    counters (`steps_run`, `gradient_forwards`, `candidate_forwards`,
+    `wall_clock_s`). Counting here rather than estimating from
+    `num_steps * search_width` matters because the re-tokenization filter drops
+    candidates, so the estimate is an upper bound, not the truth.
     """
     device = suffix_ids.device
 
@@ -213,6 +223,7 @@ def run_gcg(
         target=target,
         suffix_ids=suffix_ids,
         device=str(device),
+        prior_turns=prior_turns,
     )
 
     prefix_cache = None
@@ -222,6 +233,9 @@ def run_gcg(
     loss_history = []
     best_loss = float("inf")
     best_suffix = suffix_ids.clone()
+
+    candidate_forwards = 0
+    t_start = time.perf_counter()
 
     iterator = trange(num_steps, desc="GCG Attack Metrics", disable=not verbose)
 
@@ -241,6 +255,7 @@ def run_gcg(
         losses = evaluate_candidates(
             model, token_manager, candidates, mini_batch_size, prefix_cache,
         )
+        candidate_forwards += int(candidates.shape[0])
 
         # Step 6: greedy selection
         best_idx = losses.argmin().item()
@@ -256,5 +271,14 @@ def run_gcg(
 
         if verbose:
             iterator.set_postfix(step_loss=f"{new_loss:.4f}", best_loss=f"{best_loss:.4f}")
+
+    if stats_out is not None:
+        stats_out.update(
+            steps_run=len(loss_history),
+            gradient_forwards=len(loss_history),
+            candidate_forwards=candidate_forwards,
+            wall_clock_s=time.perf_counter() - t_start,
+            best_loss=best_loss,
+        )
 
     return best_suffix, loss_history

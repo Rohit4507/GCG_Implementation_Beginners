@@ -7,7 +7,8 @@ same greedy update — but substitutes tokens uniformly at random from the
 vocabulary instead of using the gradient top-k. The difference between the
 two loss curves is precisely the value of the gradient signal.
 """
-from typing import Tuple
+import time
+from typing import Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -49,12 +50,15 @@ def run_random_search(
     mini_batch_size: int = 64,
     use_kv_cache: bool = True,
     verbose: bool = True,
+    stats_out: Optional[dict] = None,
 ) -> Tuple[Tensor, list]:
     """
     Random-search baseline of Algorithm 1.
 
     Returns (best_suffix_ids, loss_history) exactly like run_gcg, so the two
-    are directly comparable.
+    are directly comparable. `stats_out` is filled with the same counters
+    run_gcg reports, so the baseline's cost can be compared fairly: it spends
+    forward passes but no backward passes.
     """
     device = suffix_ids.device
     vocab_size = model.get_input_embeddings().weight.shape[0]
@@ -71,6 +75,8 @@ def run_random_search(
     loss_history = []
     best_loss = float("inf")
     best_suffix = suffix_ids.clone()
+    candidate_forwards = 0
+    t_start = time.perf_counter()
 
     iterator = trange(num_steps, desc="Random-search baseline", disable=not verbose)
 
@@ -81,6 +87,7 @@ def run_random_search(
         losses = evaluate_candidates(
             model, token_manager, candidates, mini_batch_size, prefix_cache,
         )
+        candidate_forwards += int(candidates.shape[0])
 
         best_idx = losses.argmin().item()
         new_loss = losses[best_idx].item()
@@ -94,6 +101,15 @@ def run_random_search(
 
         if verbose:
             iterator.set_postfix(step_loss=f"{new_loss:.4f}", best_loss=f"{best_loss:.4f}")
+
+    if stats_out is not None:
+        stats_out.update(
+            steps_run=len(loss_history),
+            gradient_forwards=0,  # by construction: no gradient is ever computed
+            candidate_forwards=candidate_forwards,
+            wall_clock_s=time.perf_counter() - t_start,
+            best_loss=best_loss,
+        )
 
     return best_suffix, loss_history
 

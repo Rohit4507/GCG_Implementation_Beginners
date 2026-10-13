@@ -8,7 +8,7 @@ report a refusal-phrase heuristic so readers can see both views.
 """
 import math
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional  # noqa: F401 (Optional used in signatures)
 
 import torch
 import torch.nn.functional as F
@@ -153,10 +153,15 @@ def evaluate_pairs(
     max_new_tokens: int = 128,
     temperature: float = 0.0,
     device: str = "cuda",
+    prior_turns: Optional[List[Dict]] = None,
 ) -> Dict:
     """
     Run generation with the optimized suffix on every (goal, target) pair
     and score each response.
+
+    `prior_turns` (multi-turn evaluation) prepends that conversation before the
+    attacked final user message, so the suffix is scored in the same context it
+    was optimised in.
 
     Returns {"samples": [...], "summary": {...}}.
     """
@@ -164,7 +169,10 @@ def evaluate_pairs(
     samples = []
 
     for goal, target in zip(goals, targets):
-        tm = TokenManager(tokenizer, goal, target, suffix_ids, device)
+        tm = TokenManager(
+            tokenizer, goal, target, suffix_ids, device,
+            prior_turns=prior_turns,
+        )
         prompt_ids = tm.build_prompt_ids(suffix_ids)
         response = generate_response(
             model, tokenizer, prompt_ids, max_new_tokens, temperature,
