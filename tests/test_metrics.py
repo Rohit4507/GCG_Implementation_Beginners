@@ -7,8 +7,8 @@ Run with either:
 
 These exist because the ASR metric is the number every downstream claim in this
 repo depends on, and the first version of `is_target_prefix_match` scored a
-short response that merely *begins like* the target as a jailbreak. See
-AUDIT.md ("Defect 1").
+short response that merely *begins like* the target as a jailbreak. See the
+"Known defects & corrections" section of README.md.
 """
 import unittest
 
