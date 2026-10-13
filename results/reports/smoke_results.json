@@ -9,8 +9,8 @@
       "grad_loss_abs_diff": 0.0,
       "candidate_loss_max_abs_diff": 4.76837158203125e-07,
       "trajectory_max_abs_diff": 4.76837158203125e-07,
-      "time_plain_s": 0.18,
-      "time_kv_cache_s": 0.17,
+      "time_plain_s": 0.13,
+      "time_kv_cache_s": 0.11,
       "loss_first": 6.291787624359131,
       "loss_last": 6.271170616149902
     },
@@ -41,7 +41,7 @@
         "random": false,
         "natural": false
       },
-      "notes": "Ideal detector behavior: optimized=True, random=True, natural=False. On a randomly-initialized tiny model the perplexities are not calibrated; on real models this filter cleanly separates gibberish suffixes from natural text."
+      "notes": "Ideal detector behavior: optimized=True, random=True, natural=False. On a randomly-initialized tiny model the perplexities are not calibrated, so the verdicts below are not meaningful. Whether a perplexity threshold separates optimized gibberish suffixes from natural text on real aligned models is an untested hypothesis (cf. 'smooth-LLM' style defenses, which specifically defeat it) - it must be measured, not assumed."
     },
     "random_search_baseline": {
       "pass": true,
