@@ -1,0 +1,73 @@
+# Proves the pipeline works on a clean machine, so that nobody has to take a
+# screenshot's word for it. CPU-only: the smoke test needs no GPU and downloads
+# nothing (it builds its own tiny model and tokenizer offline).
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # CPU torch wheels: ~200 MB instead of pulling the whole CUDA stack.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch \
+            || pip install torch
+          pip install -r requirements.txt
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      # The 7-check end-to-end validation, including the numerical proof that
+      # the KV-cache matches a full forward pass.
+      - name: Pipeline smoke test
+        run: python -m experiments.run_smoke
+
+      # A real experiment runner, on the offline model, to catch breakage in the
+      # argument parsing / record-writing paths that the smoke test does not
+      # exercise. Results are intentionally meaningless here; the run only has to
+      # complete and emit a record with provenance and accounting.
+      - name: End-to-end runner check
+        run: |
+          python -m experiments.run_algorithm1 --tiny --benchmark --steps 3 --num-prompts 2
+          python - <<'PY'
+          import glob, json, sys
+
+          paths = sorted(glob.glob("results/reports/generated/algorithm1_*.json"))
+          if not paths:
+              sys.exit("no run record was written")
+          rec = json.load(open(paths[-1]))
+
+          # A record that cannot say which model it used is not evidence.
+          model = rec.get("model") or {}
+          assert model.get("model_kind") == "tiny_random", model
+          assert model.get("hf_model_id") is None, model
+
+          acc = rec.get("accounting") or {}
+          assert acc.get("total_forwards", 0) > 0, acc
+          assert acc.get("cost_per_success_defined") is False, acc
+          print("run record OK:", paths[-1])
+          PY
+
+      - name: Upload run records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-records
+          path: results/reports/
+          retention-days: 14
