@@ -1,6 +1,8 @@
+import time
+from typing import List, Optional, Tuple
+
 import torch
 from torch import Tensor
-from typing import List, Tuple
 from tqdm import trange
 
 from .kv_cache import PrefixCache
@@ -26,6 +28,7 @@ def run_universal_gcg(
     prompt_add_interval: int = 50,
     use_kv_cache: bool = True,
     verbose: bool = True,
+    stats_out: Optional[dict] = None,
 ) -> Tuple[Tensor, list]:
     """
     Algorithm 2: Universal/multi-prompt GCG Engine.
@@ -33,6 +36,11 @@ def run_universal_gcg(
     A shared suffix is optimized across multiple goal/target pairs.
     Prompts are introduced progressively according to
     num_prompts_start and prompt_add_interval.
+
+    If `stats_out` is a dict it is filled in with real compute counters. Note
+    that a universal step is far more expensive than a single-prompt step:
+    each step back-props once per active prompt and scores every candidate
+    against every active prompt.
     """
 
     assert len(goals) == len(targets), (
@@ -45,6 +53,10 @@ def run_universal_gcg(
     loss_history = []
     best_loss = float("inf")
     best_suffix = suffix_ids.clone()
+
+    candidate_forwards = 0
+    gradient_forwards = 0
+    t_start = time.perf_counter()
 
     # KV caches of the fixed prompt prefixes, built lazily and reused
     # across steps (the prefix of each prompt never changes).
@@ -116,6 +128,7 @@ def run_universal_gcg(
 
             aggregated_grad += grad
             total_loss += loss_val
+            gradient_forwards += 1
 
         # Average normalized gradients
         aggregated_grad /= num_active
@@ -167,6 +180,7 @@ def run_universal_gcg(
             )
 
             total_candidate_losses += losses
+            candidate_forwards += int(candidates.shape[0])
 
         # Average candidate loss across active prompts
         mean_candidate_losses = (
@@ -217,5 +231,14 @@ def run_universal_gcg(
                     else suffix_str
                 ),
             )
+
+    if stats_out is not None:
+        stats_out.update(
+            steps_run=len(loss_history),
+            gradient_forwards=gradient_forwards,
+            candidate_forwards=candidate_forwards,
+            wall_clock_s=time.perf_counter() - t_start,
+            best_loss=best_loss,
+        )
 
     return best_suffix, loss_history

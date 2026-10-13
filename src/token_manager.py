@@ -1,3 +1,5 @@
+from typing import List, Optional
+
 import torch
 from transformers import AutoTokenizer
 
@@ -9,12 +11,19 @@ class TokenManager:
     """
     Manages the prompt layout for GCG.
 
-    Layout:
+    Single-turn layout:
 
         [chat prefix + goal]
         [optimized suffix]
         [chat suffix / assistant prompt]
         [target]
+
+    Multi-turn layout (`prior_turns` supplied) prepends those turns to the
+    conversation, so the suffix is optimised against the goal *inside an
+    existing dialogue* rather than as a first message:
+
+        [turn 1 user] [turn 1 assistant] ... [final user turn + goal][suffix]
+        [assistant prompt][target]
 
     The suffix and target boundaries are determined from the actual
     chat-template text rather than searching for a separately-tokenized
@@ -28,18 +37,25 @@ class TokenManager:
         target: str,
         suffix_ids: torch.Tensor,
         device: str = "cuda",
+        prior_turns: Optional[List[dict]] = None,
     ):
         self.tokenizer = tokenizer
         self.goal = goal
         self.target = target
         self.device = device
+        self.prior_turns = list(prior_turns) if prior_turns else []
+        self.n_prior_turns = len(self.prior_turns)
         # suffix_ids may be [L] or [1, L]
         self.suffix_len = suffix_ids.shape[-1]
 
         # ---------------------------------------------------------
         # 1. Create the chat template with a text sentinel
+        #
+        # Any prior turns come first, so the sentinel still marks the end of
+        # the FINAL user message. Everything before the sentinel is the cached
+        # prefix, which is exactly what Algorithm 1 wants.
         # ---------------------------------------------------------
-        messages = [
+        messages = self.prior_turns + [
             {
                 "role": "user",
                 "content": f"{goal} {_SUFFIX_SENTINEL}",

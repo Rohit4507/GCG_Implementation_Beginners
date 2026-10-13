@@ -13,6 +13,7 @@ judge score as feedback (Chao et al., 2023, arXiv:2310.08419).
 import argparse
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 import matplotlib
@@ -25,6 +26,7 @@ from src.data import load_benchmark_pairs, load_pairs
 from src.evaluate import contains_refusal, is_target_prefix_match, text_perplexity
 from src.model import load_model_and_tokenizer, resolve_device
 from src.pair import chat_generate, run_pair
+from src.provenance import RunAccounting, count_successes, describe_model, loss_floor
 
 
 def parse_args():
@@ -40,6 +42,11 @@ def parse_args():
     p.add_argument("--n-streams", type=int, default=None)
     p.add_argument("--n-iterations", type=int, default=None)
     p.add_argument("--device", default="auto")
+    p.add_argument("--load-in-4bit", action="store_true",
+                   help="Load in 4-bit (needed for 7-8B models on a 16GB card)")
+    p.add_argument("--gpu-rate-usd-per-hour", type=float, default=0.0,
+                   help="Marginal GPU cost, for cost-per-success accounting "
+                        "(default 0.0 = free-tier compute)")
     p.add_argument("--tiny", action="store_true",
                    help="Use the tiny offline model (no HF download needed)")
     return p.parse_args()
@@ -108,6 +115,7 @@ def main():
     print(f"Budget: {cfg.n_streams} streams x {cfg.n_iterations} iterations "
           f"(<= {cfg.n_streams * cfg.n_iterations} target queries), judge={cfg.judge}\n")
 
+    t_start = time.time()
     best_prompt, streams = run_pair(
         target_model, target_tokenizer, goal, target,
         attacker_model=attacker_model, attacker_tokenizer=attacker_tokenizer,
@@ -136,6 +144,31 @@ def main():
     goal_ppl = text_perplexity(target_model, target_tokenizer, goal, device)
 
     n_queries = sum(len(s) for s in streams)
+    wall_clock_s = time.time() - t_start
+
+    # ---- Provenance + accounting ----
+    # `cfg.model_id` is what was *requested*; describe_model reports what was
+    # actually loaded. On --tiny those differ, and records used to print the
+    # requested id, which made offline runs look like real-model runs.
+    model_info = describe_model(
+        tiny=args.tiny, model_id=cfg.model_id,
+        tokenizer=target_tokenizer, seed=cfg.seed,
+    )
+    account = RunAccounting(
+        device=device,
+        steps_run=n_queries,             # one refinement query per "step"
+        gradient_forwards=0,             # PAIR is black-box: no gradients at all
+        candidate_forwards=n_queries,    # each query = one target forward pass
+        wall_clock_s=wall_clock_s,
+        gpu_hourly_usd=args.gpu_rate_usd_per_hour,
+        n_eval_pairs=1,
+        n_successes=1 if success else 0,
+        notes=(
+            "tiny random-weight model: ASR here measures whether the loop runs, "
+            "not whether a guardrail can be bypassed"
+        ) if args.tiny else "",
+    )
+    account_dict = account.as_dict()
 
     # ---- Plot: best-score-so-far per stream ----
     os.makedirs("results/plots", exist_ok=True)
@@ -148,7 +181,7 @@ def main():
     plt.xlabel("Iteration")
     plt.ylabel("Judge score (1-10)")
     plt.ylim(0, 11)
-    plt.title(f"PAIR — {cfg.model_id} ({args.preset}, judge={cfg.judge})")
+    plt.title(f"PAIR — {model_info['model_label']} ({args.preset}, judge={cfg.judge})")
     plt.legend()
     plt.tight_layout()
     plt.savefig("results/plots/pair_scores.png", dpi=150)
@@ -157,8 +190,17 @@ def main():
     # ---- Persist + summarize ----
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run = {
-        "model_id": cfg.model_id,
-        "attacker_model_id": cfg.attacker_model_id or cfg.model_id,
+        # What was actually loaded, not what was requested (see src/provenance.py).
+        "run_kind": "pair_black_box",
+        "model": model_info,
+        "attacker_model": (
+            model_info if same_attacker
+            else describe_model(tiny=False, model_id=cfg.attacker_model_id)
+        ),
+        "dataset_source": (
+            "bundled sample (data/advbench_sample.jsonl)" if args.benchmark
+            else (args.data or "preset goals (src/config.py)")
+        ),
         "preset": args.preset,
         "judge": cfg.judge,
         "seed": cfg.seed,
@@ -173,6 +215,8 @@ def main():
         "refusal": refusal,
         "best_prompt_perplexity": prompt_ppl,
         "goal_perplexity": goal_ppl,
+        "random_guess_floor": loss_floor(model_info.get("vocab_size")),
+        "accounting": account_dict,
         "streams": streams,
     }
     path = f"results/reports/generated/pair_{stamp}.json"
@@ -181,12 +225,21 @@ def main():
     print(f"Saved run record to {path}")
 
     print("\n" + "=" * 64)
+    print(f"Model (actually used): {model_info['model_label']}")
     print(f"Queries used:     {n_queries} (<= {cfg.n_streams * cfg.n_iterations} budget)")
     print(f"Best prompt:      {best_prompt!r}")
     print(f"Final response:   {final_response[:200]!r}")
     print(f"Success (ASR):    {success}")
     print(f"Refusal detected: {refusal}")
     print(f"Prompt PPL:       {prompt_ppl:.2f}  (plain goal PPL: {goal_ppl:.2f})")
+    cps = account_dict["cost_per_success_usd"]
+    cost_line = (
+        f"${cps:.4f}/success" if cps is not None
+        else "UNDEFINED (0 successes in this run — not zero, undefined)"
+    )
+    print(f"Cost per successful attack: {cost_line}")
+    print(f"Compute: {account.total_forwards} target forwards | "
+          f"{wall_clock_s:.1f}s wall clock")
     print("=" * 64)
     if success:
         print("✅ PAIR found a prompt whose response matches the target prefix.")
