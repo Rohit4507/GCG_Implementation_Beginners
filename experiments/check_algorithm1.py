@@ -1,3 +1,19 @@
+"""
+Development scratch script — superseded, kept for the record.
+
+This was the first end-to-end exercise of Algorithm 1 against a real model,
+written before the experiment runners existed. `experiments/run_algorithm1.py`
+now does everything this does, plus KV-cache reuse, benchmark loading, proper
+evaluation, run records and cost accounting. Nothing imports this file.
+
+It also hardcodes a model id and downloads it, so prefer:
+
+    python -m experiments.run_algorithm1 --preset paper --benchmark \
+        --model <hf-id> --load-in-4bit --steps 500
+
+Use this file only to see the raw pieces (gradient -> candidates -> score)
+without the surrounding machinery.
+"""
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
