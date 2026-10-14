@@ -1,0 +1,27 @@
+{
+  "record": "seed_variance_20261012T093618Z.json",
+  "summary": {
+    "n": 0,
+    "strict_prefix": {
+      "successes": 0,
+      "rate": null,
+      "ci95_low": null,
+      "ci95_high": null
+    },
+    "not_refused": {
+      "successes": 0,
+      "rate": null,
+      "ci95_low": null,
+      "ci95_high": null
+    },
+    "engaged": {
+      "successes": 0,
+      "rate": null,
+      "ci95_low": null,
+      "ci95_high": null
+    },
+    "degenerate_reasons": {},
+    "refusals": 0
+  },
+  "samples": []
+}

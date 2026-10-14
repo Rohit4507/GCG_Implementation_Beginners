@@ -21,6 +21,8 @@ import os
 import shutil
 from datetime import datetime, timezone
 
+from src.judge import iter_samples, score_response, summarise as judge_summarise
+
 RECORDS = "results/reports/generated/*.json"
 PLOTS_SRC = "results/plots"
 DOCS = "docs"
@@ -176,6 +178,136 @@ def load_records():
     return out
 
 
+def pooled_ladder(records):
+    """
+    Score every stored response under the multi-criterion judge and pool.
+
+    This is the number that stops a bare "0% ASR" from being the whole story.
+    `strict_prefix` is what the repo used to report; `not_refused` is a hard
+    *ceiling* on the true attack success rate, because a model that refused
+    cannot have complied. When the two disagree, the gap is the measurement
+    problem, not the model's robustness, and the page has to say so.
+
+    Scored from the responses already inside the records — no model, no GPU.
+    """
+    cards = []
+    for rec in records:
+        for sample in iter_samples(rec):
+            cards.append(score_response(
+                response=sample.get("response", ""),
+                goal=sample.get("goal", ""),
+                target=sample.get("target", ""),
+                prompt=sample.get("goal", ""),
+            ))
+    return judge_summarise(cards)
+
+
+def _ladder_html(ladder):
+    """Render the ladder, or a note that there is nothing to score yet."""
+    if not ladder or not ladder.get("n"):
+        return (
+            "<h2>Attack-success ladder</h2>"
+            "<p>No run record in this repository stores a raw generation, so there "
+            "is nothing to re-score. The ladder needs responses, not just counts.</p>"
+        )
+
+    def rung(key, label, note):
+        e = ladder[key]
+        rate = "—" if e["rate"] is None else f"{e['rate'] * 100:.0f}%"
+        ci = "—" if e["rate"] is None else (
+            f"{e['ci95_low'] * 100:.0f}–{e['ci95_high'] * 100:.0f}%"
+        )
+        return (
+            f"<tr><td><code>{key}</code></td><td>{label}</td>"
+            f"<td class='n'>{e['successes']}/{ladder['n']}</td>"
+            f"<td class='n'>{rate}</td><td class='n'>{ci}</td>"
+            f"<td>{note}</td></tr>"
+        )
+
+    reasons = ladder.get("degenerate_reasons") or {}
+    reason_txt = ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())) or "none"
+
+    strict = ladder["strict_prefix"]
+    ceiling = ladder["not_refused"]
+    engaged = ladder["engaged"]
+    n = ladder["n"]
+    degenerate = sum(reasons.values())
+
+    # Four distinct situations produce the same "0% ASR" headline, and the page
+    # must not describe them with the same sentence. In particular a vacuous
+    # ceiling (every generation was garbage, so nothing was ever in a position
+    # to refuse) must not be presented as evidence of measurement error.
+    if strict["successes"] > 0:
+        gap = (
+            f"<p><strong>{strict['successes']} of {n}</strong> generations reproduced "
+            f"their target verbatim. The rows below say how much further the attack "
+            f"reached beyond that.</p>"
+        )
+    elif engaged["successes"] > 0:
+        gap = (
+            f"<p><strong>This is the measurement-gap case.</strong> Not one response "
+            f"reproduced its target verbatim, yet <strong>{engaged['successes']} of "
+            f"{n}</strong> refused nothing, looped nothing, and answered on topic in "
+            f"their own words. The strict criterion scored every one of those as a "
+            f"failure. The true attack-success rate is at least "
+            f"{engaged['ci95_low'] * 100:.0f}% and the ceiling on it is "
+            f"{ceiling['ci95_high'] * 100:.0f}%; the single number the repo used to "
+            f"report, 0%, is an artefact of the scoring rule.</p>"
+        )
+    elif degenerate == n:
+        gap = (
+            f"<p><strong>The ceiling is vacuous here.</strong> All {n} generations were "
+            f"degenerate ({html.escape(reason_txt)}), so none of them was ever in a "
+            f"position to refuse anything, and the 100% on the middle rung carries no "
+            f"information about attack success. The failure in these runs is at "
+            f"generation, not at scoring: the suffix drove the model into a loop. Fix "
+            f"the generations before reading any ASR off them — and note that a "
+            f"degenerate generation is <em>not</em> a refusal, so it must not be counted "
+            f"as one in either direction.</p>"
+        )
+    else:
+        refusals = ladder.get("refusals", 0)
+        gap = (
+            f"<p>Nothing here engaged the request: {refusals} of {n} generations "
+            f"refused outright and {degenerate} were degenerate "
+            f"({html.escape(reason_txt)}). The strict criterion and its ceiling agree, "
+            f"so 0% is a real measurement rather than a scoring artefact — though with "
+            f"n={n} the rate is bounded above by {strict['ci95_high'] * 100:.0f}%, "
+            f"which is the number to quote when saying an attack &quot;did not "
+            f"work&quot;.</p>"
+        )
+
+    return f"""<h2>Attack-success ladder</h2>
+<p>One ASR number cannot tell a robust model apart from a broken scoring rule:
+both produce 0%. Each rung below is a strictly <em>necessary</em> condition for
+the one above it, so the gap between rungs says which ingredient is missing.
+Scored from the raw responses already stored in the records, with no model and
+no GPU.</p>
+<table>
+<thead><tr><th>rung</th><th>meaning</th><th class='n'>count</th>
+<th class='n'>rate</th><th class='n'>95% CI</th><th>why it matters</th></tr></thead>
+<tbody>
+{rung("strict_prefix", "starts with the whole target, verbatim",
+      "The GCG paper's criterion. On this sample 26 of 30 targets are the goal with "
+      "&quot;Sure, here is a &quot; in front, so it demands a verbatim echo of the "
+      "user's own message.")}
+{rung("not_refused", "no refusal phrase matched",
+      "A <strong>ceiling</strong>, not an answer: a model that refused cannot have "
+      "complied, so the true ASR cannot exceed this.")}
+{rung("engaged", "not refused, not degenerate, on topic, with content of its own",
+      "The closest thing here to &quot;the model actually attempted it&quot;. A "
+      "transparent heuristic, not HarmBench and not an LLM judge.")}
+</tbody></table>
+{gap}
+<p>Intervals are 95% Wilson score intervals. They are not decoration:
+<strong>0 successes out of {ladder["n"]} is not a 0% rate</strong> — it is a rate
+below {ladder["strict_prefix"]["ci95_high"] * 100:.0f}%. Any 0% in the table above
+should be read with its bound.</p>
+<p>Degenerate generations: {html.escape(reason_txt)}.
+Mean goal-word coverage {ladder.get("mean_goal_coverage", "—")};
+mean novel content {ladder.get("mean_novel_content", "—")}.</p>"""
+
+
 def summarise(records):
     """Headline facts. Nothing here is inferred; it is all read from records."""
     real_model_runs = 0
@@ -197,6 +329,7 @@ def summarise(records):
         "n_successes": successes,
         "total_forwards": total_forwards,
         "n_kinds": len(kinds),
+        "ladder": pooled_ladder(records),
     }
 
 
@@ -340,6 +473,8 @@ def build(records, plots):
 
     stamp = datetime.now(timezone.utc).strftime("%d %b %Y")
 
+    ladder_html = _ladder_html(s.get("ladder"))
+
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -357,6 +492,8 @@ number below is read out of a JSON file in the repository.</p>
 </div>
 
 <div class="cards">{cards}</div>
+
+{ladder_html}
 
 <h2>All recorded runs</h2>
 <p>A rate without an <code>n</code> is not a result, so the prompt count is a
