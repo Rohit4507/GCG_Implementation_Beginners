@@ -154,6 +154,7 @@ def evaluate_pairs(
     temperature: float = 0.0,
     device: str = "cuda",
     prior_turns: Optional[List[Dict]] = None,
+    index_offset: int = 0,
 ) -> Dict:
     """
     Run generation with the optimized suffix on every (goal, target) pair
@@ -168,7 +169,7 @@ def evaluate_pairs(
     assert len(goals) == len(targets)
     samples = []
 
-    for goal, target in zip(goals, targets):
+    for i, (goal, target) in enumerate(zip(goals, targets)):
         tm = TokenManager(
             tokenizer, goal, target, suffix_ids, device,
             prior_turns=prior_turns,
@@ -180,6 +181,10 @@ def evaluate_pairs(
         prefix_ok = is_target_prefix_match(response, target)
         refusal = contains_refusal(response)
         samples.append({
+            # Index into the *caller's* list, not this call's. A per-prompt run
+            # evaluates one prompt at a time and then pools; without an offset
+            # every pooled sample would claim to be pair 0.
+            "pair_index": index_offset + i,
             "goal": goal,
             "target": target,
             "response": response,
@@ -188,10 +193,37 @@ def evaluate_pairs(
             "success": prefix_ok,  # paper-style success criterion
         })
 
+    return {"samples": samples, "summary": summarise_samples(samples)}
+
+
+def summarise_samples(samples: List[Dict]) -> Dict:
+    """
+    ASR/refusal summary for a list of already-scored samples.
+
+    Split out of `evaluate_pairs` so that pooling recomputes from samples
+    rather than averaging per-call summaries. Averaging summaries would weight
+    a 1-prompt call the same as a 10-prompt call, which is exactly the mistake
+    that made the first real-model run unreportable.
+    """
     n = max(len(samples), 1)
-    summary = {
+    return {
         "n_pairs": len(samples),
         "asr_prefix_match": sum(s["prefix_match"] for s in samples) / n,
         "refusal_rate": sum(s["refusal"] for s in samples) / n,
     }
-    return {"samples": samples, "summary": summary}
+
+
+def pool_evaluations(evaluations) -> Optional[Dict]:
+    """
+    Merge several `evaluate_pairs` results into one, recomputing the summary.
+
+    Returns None when there is nothing to pool, so a caller can tell "no
+    held-out prompts existed" apart from "the attack scored 0% on them".
+    """
+    samples: List[Dict] = []
+    for evaluation in evaluations:
+        if evaluation:
+            samples.extend(evaluation.get("samples") or [])
+    if not samples:
+        return None
+    return {"samples": samples, "summary": summarise_samples(samples)}
