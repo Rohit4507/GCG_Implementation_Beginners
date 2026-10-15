@@ -97,7 +97,8 @@ src/
   config.py            # debug / paper presets
 experiments/
   run_smoke.py         # end-to-end pipeline validation (CPU, no downloads)
-  run_algorithm1.py    # per-prompt attack + ASR + cost
+  run_algorithm1.py    # Algorithm 1 attack + in-domain/transfer ASR + cost
+  run_control.py       # no-attack control: is any of it the suffix's doing?
   run_algorithm2.py    # universal attack + held-out generalisation + cost
   run_multiturn.py     # multi-turn vs single-turn comparison
   run_baselines.py     # GCG vs random search, same budget
@@ -139,6 +140,8 @@ python -m unittest discover -s tests        # 35 unit tests
 # 2. Offline pipeline demos on the tiny random model
 python -m experiments.run_seed_variance --seeds 10     # effect size + CI, ~8s
 python -m experiments.run_algorithm1 --tiny --benchmark
+python -m experiments.run_algorithm1 --tiny --benchmark --per-prompt --num-prompts 3
+python -m experiments.run_control    --tiny --benchmark --num-prompts 4
 python -m experiments.run_algorithm2 --tiny --benchmark --held-out 2
 python -m experiments.run_multiturn  --tiny --benchmark --num-prompts 4
 python -m experiments.run_baselines  --tiny --benchmark
