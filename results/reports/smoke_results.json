@@ -9,8 +9,8 @@
       "grad_loss_abs_diff": 0.0,
       "candidate_loss_max_abs_diff": 4.76837158203125e-07,
       "trajectory_max_abs_diff": 4.76837158203125e-07,
-      "time_plain_s": 0.13,
-      "time_kv_cache_s": 0.11,
+      "time_plain_s": 0.09,
+      "time_kv_cache_s": 0.08,
       "loss_first": 6.291787624359131,
       "loss_last": 6.271170616149902
     },
