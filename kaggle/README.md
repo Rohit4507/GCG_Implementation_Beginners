@@ -58,12 +58,19 @@ to burn 10 hours debugging on GPU when the same bug would have appeared in
 ```
 1. run_smoke + unit tests           ~10 s   prove the code is correct
 2. --steps 5 timing probe           ~3 min  decide what actually fits
-3. Gate 1: one real attack          ~10 min first non-zero ASR, or the bug
-4. Algorithm 2 universal × 3 models ~6-12 h the main results table
-5. Transfer matrix (2×T4)           ~1 h    generation only, cheap
-6. Multi-turn (3-turn)              ~2-3 h  the plan's missing comparison
-7. Baselines (random search)        ~1-2 h  context for every number
+3. rescore (section 9b)             ~30 s   what the numbers mean, no GPU
+4. Gate 1: one real attack          ~10 min first non-zero ASR, or the bug
+5. no-attack control                ~5 min  decide whether an ASR means anything
+6. Algorithm 2 universal × 3 models ~6-12 h the main results table
+7. Transfer matrix (2×T4)           ~1 h    generation only, cheap
+8. Multi-turn (3-turn)              ~2-3 h  the plan's missing comparison
+9. Baselines (random search)        ~1-2 h  context for every number
 ```
+
+**Step 5 is a gate, not a formality.** If the model complies about as often with
+no attack as with an optimised suffix, then the suffix is not what caused the
+compliance and calling it a jailbreak is wrong. Run `experiments/run_control.py`
+before writing down any ASR. It runs no optimisation, so it is cheap.
 
 **Step 2 is not optional.** If one step takes 60 s, 500 steps is 8 hours for a
 *single* prompt, and the 25-prompt table will not fit. Find that out in minute
@@ -116,6 +123,38 @@ licence on the HF Hub; that is instant but must be done while logged in.
 The plan names 7–8B models. If they do not fit the quota, run 1–2B and **say so
 explicitly** in the writeup. An honest smaller matrix beats a rushed partial one,
 and a reviewer who finds an unstated gap trusts nothing else in the report.
+
+---
+
+## 6a. First: which prompts did you actually attack?
+
+`run_algorithm1.py` has two modes, and the record now records which one ran.
+
+**Default — one suffix, applied to n.** The suffix is optimised on ONE prompt
+(`--pair-index`, default 0) and then evaluated on every loaded prompt. Only the
+attacked prompt is in-domain; every other evaluation measures *transfer*. The
+record stores `in_domain` and `transfer` separately and the page shows them as
+`in-domain X% → transfer Y%`.
+
+This is the trap the first real-model run fell into: one suffix optimised on
+pair 0 of 10, evaluated on 10, and reported as a single ASR over 10. That number
+was an n=1 attack blended with an n=9 transfer result, and neither could be
+recovered from the record.
+
+**`--per-prompt` — own suffix per prompt.** A separate suffix is optimised for
+every loaded prompt and scored on its own prompt. This is the only mode where
+"ASR over n prompts" is really over n prompts.
+
+```bash
+python -m experiments.run_algorithm1 --per-prompt --preset paper --benchmark \
+    --model Qwen/Qwen2.5-1.5B-Instruct --load-in-4bit \
+    --steps 250 --num-prompts 3
+```
+
+**Cost scales with the prompt count.** Measured on a T4: 27.25 s/step for
+20-token suffixes at `search_width` 512, so 500 steps is ~3.8 h *per prompt*.
+Three prompts at 250 steps is ~5.7 h, which is most of a session. Check the
+remaining quota in section 2 before starting.
 
 ---
 
@@ -180,6 +219,8 @@ section **9b** does exactly this.
 
 - [ ] The ASR ladder reported (`strict_prefix` / `not_refused` / `engaged`), not just one number
 - [ ] Every rate carries its `n` and a 95% interval
+- [ ] In-domain ASR reported separately from transfer, each with its own `n`
+- [ ] A no-attack control run, and the lift over it stated
 - [ ] At least one run with `engaged` **> 0** (never happened in this repo yet)
 - [ ] 3 models × ≥10 prompts, every cell reported with `n`
 - [ ] Transfer numbers (source → target), both directions if time allows
