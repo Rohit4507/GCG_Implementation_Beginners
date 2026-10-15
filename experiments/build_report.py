@@ -30,7 +30,9 @@ PLOTS_DST = os.path.join(DOCS, "plots")
 
 # Display name and ordering for the record's `run_kind` field.
 RUN_KINDS = {
-    "algorithm1_per_prompt": "Algorithm 1 — per-prompt GCG",
+    "algorithm1_single_suffix": "Algorithm 1 — one suffix, applied to n",
+    "algorithm1_per_prompt": "Algorithm 1 — own suffix per prompt",
+    "no_attack_control": "No-attack control",
     "algorithm2_universal": "Algorithm 2 — universal suffix",
     "multiturn_vs_single": "Multi-turn vs single-turn",
     "cross_model_transfer": "Cross-model transfer",
@@ -62,6 +64,23 @@ def _n_from(block):
     return s.get("n_pairs") or s.get("n") or (len((block or {}).get("samples") or []) or None)
 
 
+def _kind(record):
+    """
+    The record's `run_kind`, with one legacy repair.
+
+    `algorithm1_per_prompt` is what the single-suffix runner wrote before the
+    split existed: the name was aspirational, the behaviour was not. Those
+    records have no `n_suffixes_optimised`. Disambiguate on that field rather
+    than guess, so the older rows are not relabelled as something they were not.
+    """
+    kind = record.get("run_kind") or (
+        "seed_variance" if "mean_paired_diff_nats" in record else None
+    )
+    if kind == "algorithm1_per_prompt" and "n_suffixes_optimised" not in record:
+        return "algorithm1_single_suffix"
+    return kind
+
+
 def extract(record):
     """
     Pull the reportable numbers out of a record.
@@ -72,9 +91,7 @@ def extract(record):
     baseline, a seed-variance study — the headline is whatever that run actually
     measured, rather than an invented zero.
     """
-    kind = record.get("run_kind") or (
-        "seed_variance" if "mean_paired_diff_nats" in record else None
-    )
+    kind = _kind(record)
     row = {
         "kind": RUN_KINDS.get(kind, kind or "—"),
         "model": _model_label(record),
@@ -82,12 +99,31 @@ def extract(record):
         "headline_label": "—", "headline_value": "—",
     }
 
-    if kind == "algorithm1_per_prompt":
+    if kind in ("algorithm1_single_suffix", "algorithm1_per_prompt"):
+        # `in_domain` is the prompt(s) the suffix was actually optimised on. The
+        # fallback covers records written before the split existed, where
+        # `evaluation` pooled attacked and unattacked prompts under one number.
+        ind = record.get("in_domain") or record.get("evaluation") or {}
+        tra = record.get("transfer") or {}
+        row["asr"] = _summary(ind).get("asr_prefix_match")
+        row["n"] = _n_from(ind)
+        row["headline_label"] = "in-domain → transfer ASR"
+        row["headline_value"] = (
+            f'{_pct(_summary(ind).get("asr_prefix_match"))} → '
+            f'{_pct(_summary(tra).get("asr_prefix_match"))}'
+        )
+
+    elif kind == "no_attack_control":
         ev = record.get("evaluation") or {}
         row["asr"] = _summary(ev).get("asr_prefix_match")
         row["n"] = _n_from(ev)
-        row["headline_label"] = "final loss"
-        row["headline_value"] = _f(record.get("loss_last"))
+        row["asr_label"] = "ASR (no attack)"
+        # The number that decides whether any attack claim is real: how much
+        # more often the model complies when something is actually attacked.
+        delta = ((record.get("lift_vs_no_attack") or {}).get("optimised") or {}
+                 ).get("engaged_delta")
+        row["headline_label"] = "lift over no-attack"
+        row["headline_value"] = "—" if delta is None else f"{delta:+.0%}"
 
     elif kind == "algorithm2_universal":
         ind, held = record.get("in_domain") or {}, record.get("held_out") or {}
@@ -437,10 +473,16 @@ def build(records, plots):
         hit = (r["asr"] or 0) > 0
         asr = _pct(r["asr"])
         style = " style='color:var(--ok);font-weight:600'" if hit else ""
+        # The column means different things per row — in-domain attack success
+        # for an attack run, no-attack compliance for the control — so the cell
+        # carries its own qualifier instead of one shared header pretending the
+        # numbers are the same kind of quantity.
+        label = r.get("asr_label", "ASR")
+        qualifier = "" if label == "ASR" else f"<br><small>{html.escape(label)}</small>"
         body.append(
             f"<tr><td>{html.escape(str(r['kind']))}</td>"
             f"<td><code>{html.escape(str(r['model']))}</code></td>"
-            f"<td class='n'{style}>{asr}</td>"
+            f"<td class='n'{style}>{asr}{qualifier}</td>"
             f"<td class='n'>{num(r['n'])}</td>"
             f"<td>{html.escape(str(r['headline_label']))}</td>"
             f"<td class='n'>{html.escape(str(r['headline_value']))}</td>"
@@ -505,7 +547,7 @@ the headline column shows what they did measure instead of a fabricated zero.</p
 
 <table>
 <thead><tr>
-<th>Run type</th><th>Model actually loaded</th><th class="n">ASR</th>
+<th>Run type</th><th>Model actually loaded</th><th class="n">ASR (in-domain)</th>
 <th class="n">n</th><th>headline metric</th><th class="n">value</th>
 <th class="n">forwards</th><th class="n">wall (s)</th>
 </tr></thead>
