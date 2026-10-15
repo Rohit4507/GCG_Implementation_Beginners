@@ -97,11 +97,19 @@ def run_universal_gcg(
         # ---------------------------------------------------------
         # Step 1: Aggregate normalized gradients
         # ---------------------------------------------------------
+        # Size from the embedding matrix, not the tokenizer. On real HF
+        # models these differ (Qwen2.5-1.5B: tokenizer.vocab_size 151643 vs
+        # 151936 embedding rows) and `compute_token_gradient` returns a
+        # gradient shaped by the embedding matrix, so sizing the accumulator
+        # from the tokenizer makes `aggregated_grad += grad` a hard crash.
+        embedding_matrix = model.get_input_embeddings().weight
+        grad_vocab = embedding_matrix.shape[0]
+
         aggregated_grad = torch.zeros(
             suffix_ids.shape[0],
-            tokenizer.vocab_size,
+            grad_vocab,
             device=device,
-            dtype=model.get_input_embeddings().weight.dtype,
+            dtype=embedding_matrix.dtype,
         )
 
         total_loss = 0.0
@@ -143,6 +151,7 @@ def run_universal_gcg(
             aggregated_grad,
             topk,
             search_width,
+            valid_vocab=len(tokenizer),
         )
 
         # ---------------------------------------------------------
