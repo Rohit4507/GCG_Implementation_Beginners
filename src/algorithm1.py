@@ -109,13 +109,27 @@ def sample_candidates(
     grad: Tensor,
     topk: int,
     search_width: int,
+    valid_vocab: Optional[int] = None,
 ) -> Tensor:
     """
     Steps 2–3 of Algorithm 1 (vectorized): one candidate keeps the current
     suffix, the remaining `search_width - 1` each get a single random
     position substituted with a random token from that position's top-k.
+
+    `valid_vocab` is the number of token ids the tokenizer can actually decode.
+    The gradient is sized by the model's embedding matrix, which is often
+    *larger* than the tokenizer: Qwen2.5-1.5B has 151,643 tokenizer tokens and
+    151,936 embedding rows. Ids in between are padding rows that decode to
+    nothing, so the re-tokenisation filter discards them anyway — but they
+    still occupy slots in the top-k that a real token could have used. Masking
+    them out costs nothing and stops the search wasting candidates.
     """
-    top_indices = (-grad).topk(topk, dim=1).indices  # [suffix_len, topk]
+    scores = -grad
+    if valid_vocab is not None and valid_vocab < grad.shape[1]:
+        scores = scores.clone()
+        scores[:, valid_vocab:] = float("-inf")
+
+    top_indices = scores.topk(topk, dim=1).indices  # [suffix_len, topk]
     suffix_len = suffix_ids.shape[-1]
     device = suffix_ids.device
 
@@ -246,7 +260,10 @@ def run_gcg(
         )
 
         # Steps 2-3: vectorized candidate generation
-        candidates = sample_candidates(suffix_ids, grad, topk, search_width)
+        candidates = sample_candidates(
+            suffix_ids, grad, topk, search_width,
+            valid_vocab=len(tokenizer),
+        )
 
         # Step 4: template-aware re-tokenization filter
         candidates = token_manager.filter_candidates(candidates)
