@@ -278,16 +278,18 @@ def main():
         json.dump(run, f, indent=2)
     print(f"Saved run record to {path}")
 
-    print("\n" + "=" * 66)
+    print("\n" + "=" * 76)
     print(f"Model (actually used): {model_info['model_label']}")
     print(f"Attacked message is user turn {run['attack_user_turn']} "
           f"({run['n_context_messages']} prior messages in context)")
-    print(f"{'setting':>12} | {'final loss':>10} | {'ASR':>5} | {'refusal':>7}")
+    print(f"{'setting':>12} | {'final loss':>10} | {'ASR':>5} | {'engaged':>7} | {'refusal':>7}")
     for label, side in (("single-turn", single_side), ("multi-turn", multi_side)):
         s = side["evaluation"]["summary"]
         print(f"{label:>12} | {side['loss_last']:>10.4f} | "
-              f"{s['asr_prefix_match']:>4.0%} | {s['refusal_rate']:>6.0%}")
-    print("=" * 66)
+              f"{s['asr_prefix_match']:>4.0%} | "
+              f"{s.get('asr_engaged', 0.0):>6.0%} | "
+              f"{s['refusal_rate']:>6.0%}")
+    print("=" * 76)
     print(f"Verdict: {comparison['verdict']}")
     if comparison["verdict"].startswith("no attack succeeded"):
         print("  -> A null result. Report it as such: at this model size and "
