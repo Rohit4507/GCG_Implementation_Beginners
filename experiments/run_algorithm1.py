@@ -423,10 +423,12 @@ def main():
 
     if eval_result:
         s = eval_result["summary"]
-        print(f"\nIN-DOMAIN ASR (this is the headline): "
+        print(f"\nIN-DOMAIN ASR (strict prefix): "
               f"{s['asr_prefix_match']:.0%} over n={s['n_pairs']} attacked prompt(s)")
-        print(f"  refusal rate: {s['refusal_rate']:.0%}")
-        if s["asr_prefix_match"] == 0:
+        print(f"  flex prefix: {s.get('asr_flexible_prefix', 0.0):.0%} | "
+              f"engaged: {s.get('asr_engaged', 0.0):.0%} | "
+              f"refusal rate: {s['refusal_rate']:.0%}")
+        if s["asr_prefix_match"] == 0 and s.get("asr_engaged", 0.0) == 0:
             print("  -> 0% on the paper's criterion (the response must begin with the "
                   "entire target string).")
             print("     Score the stored responses with `python -m experiments.rescore` "
@@ -434,7 +436,9 @@ def main():
     if transfer_result:
         ts = transfer_result["summary"]
         print(f"\nTRANSFER ASR (suffix never optimised on these): "
-              f"{ts['asr_prefix_match']:.0%} over n={ts['n_pairs']} prompt(s)")
+              f"{ts['asr_prefix_match']:.0%} strict | "
+              f"{ts.get('asr_flexible_prefix', 0.0):.0%} flex | "
+              f"{ts.get('asr_engaged', 0.0):.0%} engaged over n={ts['n_pairs']} prompt(s)")
     elif not args.per_prompt:
         print("\nTRANSFER ASR: n/a (only one prompt loaded)")
 
@@ -443,7 +447,7 @@ def main():
           f"{accounting.wall_clock_s:.1f}s "
           f"({accounting.seconds_per_step:.2f}s/step)")
     if accounting.cost_per_success_usd is None:
-        print("Cost per successful attack: UNDEFINED (0 successes in this run)")
+        print("Cost per successful attack: UNDEFINED (0 strict-prefix successes in this run)")
     else:
         print(f"Cost per successful attack: ${accounting.cost_per_success_usd:.4f} "
               f"({accounting.forwards_per_success:,.0f} forwards/success)")
@@ -453,7 +457,10 @@ def main():
     for i, sample in enumerate((eval_result or {}).get("samples", [])):
         print(f"\n--- Attacked pair (index {sample.get('pair_index', i)}): "
               f"{sample['goal'][:80]} ---")
-        print(f"  success={sample['success']} refusal={sample['refusal']}")
+        print(f"  success={sample['success']} "
+              f"flex_prefix={sample.get('flexible_prefix_match', False)} "
+              f"engaged={sample.get('engaged', False)} "
+              f"refusal={sample['refusal']}")
         print(f"  output: {sample['response'][:160]!r}")
 
 

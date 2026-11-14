@@ -221,18 +221,20 @@ def main():
         json.dump(run, f, indent=2)
     print(f"Saved run record to {path}")
 
-    print("\n" + "=" * 64)
+    print("\n" + "=" * 74)
     print(f"Model (actually used): {model_info['model_label']}")
     print(f"Paired diff (random - GCG): {run['paired_diff_nats']:+.5f} nats")
     if floor:
         print(f"Random-guess floor: {floor:.4f}")
-    print(f"{'':>16} | {'final loss':>10} | {'ASR':>5} | {'refusal':>7}")
+    print(f"{'':>16} | {'final loss':>10} | {'ASR':>5} | {'engaged':>7} | {'refusal':>7}")
     for name in ("gcg", "random_search", "initial"):
         e = evaluation[name]
+        sm = e["summary"]
         print(f"{name:>16} | {e['mean_target_loss']:>10.4f} | "
-              f"{e['summary']['asr_prefix_match']:>4.0%} | "
-              f"{e['summary']['refusal_rate']:>6.0%}")
-    print("=" * 64)
+              f"{sm['asr_prefix_match']:>4.0%} | "
+              f"{sm.get('asr_engaged', 0.0):>6.0%} | "
+              f"{sm['refusal_rate']:>6.0%}")
+    print("=" * 74)
     if gcg_losses[-1] < rnd_losses[-1]:
         print("✅ Gradient guidance wins on final loss "
               f"({gcg_losses[-1]:.4f} < {rnd_losses[-1]:.4f})")

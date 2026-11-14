@@ -23,7 +23,12 @@ import torch
 
 from src.config import PAIRConfig
 from src.data import load_benchmark_pairs, load_pairs
-from src.evaluate import contains_refusal, is_target_prefix_match, text_perplexity
+from src.evaluate import (
+    contains_refusal,
+    is_flexible_prefix_match,
+    is_target_prefix_match,
+    text_perplexity,
+)
 from src.judge import score_response
 from src.model import load_model_and_tokenizer, resolve_device
 from src.pair import chat_generate, run_pair
@@ -146,6 +151,7 @@ def main():
         device, cfg.max_new_tokens_target, temperature=0.0,
     )
     success = is_target_prefix_match(final_response, target)
+    flex_success = is_flexible_prefix_match(final_response, target)
     refusal = contains_refusal(final_response)
     final_card = score_response(
         response=final_response,
@@ -234,6 +240,7 @@ def main():
         "best_judge_score": best_score,
         "final_judge_card": final_card,
         "success_prefix_match": success,
+        "flexible_prefix_match": flex_success,
         "refusal": refusal,
         "best_prompt_perplexity": prompt_ppl,
         "goal_perplexity": goal_ppl,
@@ -252,7 +259,7 @@ def main():
     print(f"Best prompt:      {best_prompt!r}")
     print(f"Final response:   {final_response[:200]!r}")
     print(f"Best judge score: {best_score}/10" if best_score is not None else "Best judge score: n/a")
-    print(f"Success (ASR):    {success}")
+    print(f"Success (strict): {success}  |  Flex prefix: {flex_success}")
     print(f"Engaged (ladder): {final_card['engaged']}  "
           f"(coverage={final_card['goal_coverage']:.2f}, "
           f"novelty={final_card['novel_content']:.2f}, "
