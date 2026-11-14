@@ -287,7 +287,11 @@ def summarise(scorecards: Sequence[Dict]) -> Dict:
 # Reading records
 # --------------------------------------------------------------------------
 
-def iter_samples(node, path: str = "") -> Iterator[Dict]:
+def iter_samples(
+    node,
+    path: str = "",
+    defaults: Optional[Dict[str, str]] = None,
+) -> Iterator[Dict]:
     """
     Yield every dict in a run record that carries a raw `response`.
 
@@ -296,14 +300,23 @@ def iter_samples(node, path: str = "") -> Iterator[Dict]:
     `streams[0][0]`, `single_turn/evaluation/samples` — so rather than hard-code
     each shape (which is what let the scorecard and the page drift apart), walk
     the whole document and take anything that looks like a generation.
+    Enclosing `goal`/`target` fields (such as top-level PAIR objectives above
+    `streams[s][i]`) are inherited when a sample omits them.
     `path` is carried along so a report can name where a sample came from.
     """
     if isinstance(node, dict):
+        next_defaults = dict(defaults) if defaults else {}
+        for key in ("goal", "target"):
+            if isinstance(node.get(key), str):
+                next_defaults[key] = node[key]
         if isinstance(node.get("response"), str):
-            yield dict(node, _path=path)
+            sample = dict(next_defaults)
+            sample.update(node)
+            sample["_path"] = path
+            yield sample
             return
         for key, value in node.items():
-            yield from iter_samples(value, f"{path}/{key}")
+            yield from iter_samples(value, f"{path}/{key}", next_defaults)
     elif isinstance(node, list):
         for i, value in enumerate(node):
-            yield from iter_samples(value, f"{path}[{i}]")
+            yield from iter_samples(value, f"{path}[{i}]", defaults)
