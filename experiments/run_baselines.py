@@ -57,6 +57,7 @@ def main():
         cfg.num_steps = args.steps
     if args.num_prompts:
         cfg.num_eval_prompts = args.num_prompts
+    cfg.load_in_4bit = args.load_in_4bit
     torch.manual_seed(cfg.seed)
 
     # ---- Data ----
@@ -70,6 +71,10 @@ def main():
         dataset_source = args.data
     else:
         goals, targets = cfg.goals, cfg.targets
+    if not 0 <= args.pair_index < len(goals):
+        raise SystemExit(
+            f"--pair-index {args.pair_index} is out of range for {len(goals)} pair(s)"
+        )
     goal, target = goals[args.pair_index], targets[args.pair_index]
 
     # ---- Model ----
@@ -143,9 +148,12 @@ def main():
     plt.figure(figsize=(8, 4))
     plt.plot(range(1, len(gcg_losses) + 1), gcg_losses, label="GCG (gradient-guided)")
     plt.plot(range(1, len(rnd_losses) + 1), rnd_losses, label="Random search (blind)")
+    if floor:
+        plt.axhline(floor, linestyle="--", linewidth=1,
+                    label=f"random-guess floor ln({model_info['vocab_size']})")
     plt.xlabel("Step")
     plt.ylabel("Best suffix target cross-entropy")
-    plt.title(f"GCG vs random search — {cfg.model_id} ({args.preset})")
+    plt.title(f"GCG vs random search — {model_info['model_label']} ({args.preset})")
     plt.legend()
     plt.tight_layout()
     plt.savefig("results/plots/baselines_loss.png", dpi=150)
