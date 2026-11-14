@@ -67,15 +67,24 @@ def main():
         cfg.n_streams = args.n_streams
     if args.n_iterations:
         cfg.n_iterations = args.n_iterations
+    cfg.load_in_4bit = args.load_in_4bit
     torch.manual_seed(cfg.seed)
 
     # ---- Data ----
+    dataset_source = "built-in benign demo pairs"
     if args.benchmark:
-        goals, targets = load_benchmark_pairs(n=cfg.num_eval_prompts)
+        goals, targets, dataset_source = load_benchmark_pairs(
+            n=max(cfg.num_eval_prompts, args.pair_index + 1), return_source=True,
+        )
     elif args.data:
         goals, targets = load_pairs(args.data)
+        dataset_source = args.data
     else:
         goals, targets = cfg.goals, cfg.targets
+    if not 0 <= args.pair_index < len(goals):
+        raise SystemExit(
+            f"--pair-index {args.pair_index} is out of range for {len(goals)} pair(s)"
+        )
     goal, target = goals[args.pair_index], targets[args.pair_index]
 
     # ---- Models ----
@@ -195,12 +204,12 @@ def main():
         "model": model_info,
         "attacker_model": (
             model_info if same_attacker
-            else describe_model(tiny=False, model_id=cfg.attacker_model_id)
+            else describe_model(
+                tiny=False, model_id=cfg.attacker_model_id,
+                tokenizer=attacker_tokenizer,
+            )
         ),
-        "dataset_source": (
-            "bundled sample (data/advbench_sample.jsonl)" if args.benchmark
-            else (args.data or "preset goals (src/config.py)")
-        ),
+        "dataset_source": dataset_source,
         "preset": args.preset,
         "judge": cfg.judge,
         "seed": cfg.seed,

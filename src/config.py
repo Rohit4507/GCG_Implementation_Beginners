@@ -22,6 +22,7 @@ DEBUG_DEFAULTS = {
     "topk": 10,
     "search_width": 16,
     "mini_batch_size": 8,
+    "prompt_add_interval": 5,
 }
 
 # Algorithm 1/2 hyper-parameters from the GCG paper.
@@ -31,6 +32,7 @@ PAPER_DEFAULTS = {
     "topk": 256,
     "search_width": 512,
     "mini_batch_size": 32,
+    "prompt_add_interval": 50,
 }
 
 
@@ -57,7 +59,7 @@ class GCGConfig:
 
     # ---------- universal attack (Algorithm 2) ----------
     num_prompts_start: int = 1  # start with this many prompts
-    prompt_add_interval: int = 5  # add one prompt every N steps
+    prompt_add_interval: int = DEBUG_DEFAULTS["prompt_add_interval"]  # add one prompt every N steps
 
     # ---------- data ----------
     # Optional jsonl file with {"goal": ..., "target": ...} records.

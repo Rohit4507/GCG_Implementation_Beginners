@@ -38,6 +38,10 @@ def parse_args():
     p.add_argument("--steps", type=int, default=None)
     p.add_argument("--num-prompts", type=int, default=None,
                    help="Total benchmark pairs to use, before the held-out split")
+    p.add_argument("--num-prompts-start", type=int, default=None,
+                   help="Initial active prompts in the progressive schedule")
+    p.add_argument("--prompt-add-interval", type=int, default=None,
+                   help="Add one active prompt every N steps")
     p.add_argument("--device", default="auto")
     p.add_argument("--load-in-4bit", action="store_true")
     p.add_argument("--no-kv-cache", action="store_true")
@@ -48,6 +52,7 @@ def parse_args():
                    help="Number of pairs held out of optimization")
     p.add_argument("--tiny", action="store_true",
                    help="Use the tiny offline model (no HF download needed)")
+    p.add_argument("--quiet", action="store_true", help="Hide the progress bar")
     return p.parse_args()
 
 
@@ -56,8 +61,14 @@ def main():
     cfg = GCGConfig(preset=args.preset)
     if args.model:
         cfg.model_id = args.model
-    if args.steps:
+    if args.steps is not None:
         cfg.num_steps = args.steps
+    if args.num_prompts is not None:
+        cfg.num_eval_prompts = args.num_prompts
+    if args.num_prompts_start is not None:
+        cfg.num_prompts_start = args.num_prompts_start
+    if args.prompt_add_interval is not None:
+        cfg.prompt_add_interval = args.prompt_add_interval
     cfg.load_in_4bit = args.load_in_4bit
     cfg.use_kv_cache = not args.no_kv_cache
     torch.manual_seed(cfg.seed)
@@ -70,9 +81,14 @@ def main():
         )
     elif args.data:
         goals, targets = load_pairs(args.data)
+        if args.num_prompts is not None:
+            goals, targets = goals[:args.num_prompts], targets[:args.num_prompts]
         dataset_source = args.data
     else:
         goals, targets = cfg.goals, cfg.targets
+
+    if not goals:
+        raise SystemExit("no goal/target pairs loaded")
 
     n_hold = max(args.held_out, 0)
     if n_hold >= len(goals):
@@ -127,6 +143,7 @@ def main():
         num_prompts_start=cfg.num_prompts_start,
         prompt_add_interval=cfg.prompt_add_interval,
         use_kv_cache=cfg.use_kv_cache,
+        verbose=not args.quiet,
         stats_out=stats,
     )
     suffix_text = tokenizer.decode(best_suffix, skip_special_tokens=True)
@@ -143,19 +160,25 @@ def main():
         held_out = evaluate_pairs(
             model, tokenizer, held_goals, held_targets, best_suffix,
             max_new_tokens=args.max_new_tokens, temperature=cfg.temperature,
-            device=device,
+            device=device, index_offset=len(train_goals),
         )
 
     # ---- Persist artifacts ----
     os.makedirs("results/plots", exist_ok=True)
     os.makedirs("results/reports/generated", exist_ok=True)
 
-    steps_u, losses_u = zip(*loss_history)
+    steps_u, losses_u = zip(*loss_history) if loss_history else ([], [])
     plt.figure(figsize=(8, 3.5))
-    plt.plot(steps_u, losses_u)
+    if steps_u:
+        plt.plot(steps_u, losses_u, label="mean loss")
+    if floor:
+        plt.axhline(floor, linestyle="--", linewidth=1,
+                    label=f"random-guess floor ln({model_info['vocab_size']})")
+    if floor:
+        plt.legend(fontsize=7)
     plt.xlabel("Step")
     plt.ylabel("Mean cross-entropy (active prompts)")
-    plt.title(f"GCG Algorithm 2 (universal) — {cfg.model_id} ({args.preset})")
+    plt.title(f"GCG Algorithm 2 (universal) — {model_info['model_label']} ({args.preset})")
     plt.tight_layout()
     plt.savefig("results/plots/loss_universal.png", dpi=150)
     print("Saved plot to results/plots/loss_universal.png")
@@ -213,7 +236,8 @@ def main():
     if held_out:
         hs = held_out["summary"]
         print(f"Held-out ASR:  {hs['asr_prefix_match']:.0%} over {hs['n_pairs']} prompts")
-    print(f"Final mean loss: {losses_u[-1]:.4f} (started {losses_u[0]:.4f})")
+    if losses_u:
+        print(f"Final mean loss: {losses_u[-1]:.4f} (started {losses_u[0]:.4f})")
     if floor:
         print(f"Random-guess floor: {floor:.4f} — a loss sitting here means the "
               f"suffix is not biting")
