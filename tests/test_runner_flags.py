@@ -11,12 +11,42 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.config import GCGConfig
 from src.evaluate import evaluate_pairs
-from src.model import init_suffix_ids
+from src.model import init_suffix_ids, load_model_and_tokenizer
 from src.tiny_model import build_tiny_model_and_tokenizer
+
+
+class TestModelLoadingDeviceSafety(unittest.TestCase):
+    def test_non_quantized_cuda_does_not_shard_or_conflict_with_accelerate(self):
+        mock_tok = MagicMock(pad_token="<pad>")
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+
+        with patch("src.model.AutoTokenizer.from_pretrained", return_value=mock_tok), \
+             patch("src.model.AutoModelForCausalLM.from_pretrained", return_value=mock_model) as mock_from, \
+             patch("src.model.resolve_device", return_value="cuda"):
+            load_model_and_tokenizer("dummy/model", dtype="float16", device="auto", load_in_4bit=False)
+
+        call_kwargs = mock_from.call_args.kwargs
+        self.assertNotIn("device_map", call_kwargs)
+        mock_model.to.assert_called_once_with("cuda")
+
+    def test_4bit_pins_single_gpu_and_never_calls_dot_to(self):
+        mock_tok = MagicMock(pad_token="<pad>")
+        mock_model = MagicMock()
+
+        with patch("src.model.AutoTokenizer.from_pretrained", return_value=mock_tok), \
+             patch("src.model.AutoModelForCausalLM.from_pretrained", return_value=mock_model) as mock_from, \
+             patch("src.model.resolve_device", return_value="cuda:0"):
+            load_model_and_tokenizer("dummy/model", dtype="float16", device="cuda:0", load_in_4bit=True)
+
+        call_kwargs = mock_from.call_args.kwargs
+        self.assertEqual(call_kwargs["device_map"], {"": "cuda:0"})
+        self.assertIn("quantization_config", call_kwargs)
+        mock_model.to.assert_not_called()
 
 
 class TestConfigPresets(unittest.TestCase):
@@ -138,6 +168,8 @@ class TestRunnerFlagWiring(unittest.TestCase):
                 with open(records[0], encoding="utf-8") as fh:
                     rec = json.load(fh)
                 self.assertEqual(rec["dataset_source"], mock_source)
+                self.assertIn("final_judge_card", rec)
+                self.assertIn("best_judge_score", rec)
             finally:
                 os.chdir(old_cwd)
 
@@ -154,6 +186,7 @@ class TestKaggleRunbook(unittest.TestCase):
 
         full_text = "\n".join("".join(c["source"]) for c in nb["cells"])
         self.assertNotIn("YOUR-REPO", full_text)
+        self.assertIn("bitsandbytes>=0.46.1", full_text)
         self.assertIn("experiments.run_pair", full_text)
         self.assertIn("experiments.build_report", full_text)
         self.assertIn("experiments.run_control", full_text)

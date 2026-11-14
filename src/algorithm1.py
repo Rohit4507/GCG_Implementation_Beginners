@@ -88,7 +88,7 @@ def compute_token_gradient(
         outputs = model(inputs_embeds=combined_embeds)
         target_logits = outputs.logits[:, token_manager.loss_slice, :]
 
-    target_ids = token_manager.target_ids  # [1, target_len]
+    target_ids = token_manager.target_ids.to(target_logits.device)  # [1, target_len]
 
     # Cross-entropy loss on the target response only
     loss = F.cross_entropy(
@@ -190,7 +190,7 @@ def evaluate_candidates(
             outputs = model(input_ids=input_ids)
             target_logits = outputs.logits[:, token_manager.loss_slice, :]
 
-        target_ids = token_manager.target_ids.expand(bsz, -1)
+        target_ids = token_manager.target_ids.expand(bsz, -1).to(target_logits.device)
 
         losses = F.cross_entropy(
             target_logits.reshape(-1, vocab_size),
