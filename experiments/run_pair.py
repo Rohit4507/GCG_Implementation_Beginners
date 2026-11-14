@@ -24,6 +24,7 @@ import torch
 from src.config import PAIRConfig
 from src.data import load_benchmark_pairs, load_pairs
 from src.evaluate import contains_refusal, is_target_prefix_match, text_perplexity
+from src.judge import score_response
 from src.model import load_model_and_tokenizer, resolve_device
 from src.pair import chat_generate, run_pair
 from src.provenance import RunAccounting, count_successes, describe_model, loss_floor
@@ -146,6 +147,16 @@ def main():
     )
     success = is_target_prefix_match(final_response, target)
     refusal = contains_refusal(final_response)
+    final_card = score_response(
+        response=final_response,
+        goal=goal,
+        target=target,
+        prompt=best_prompt,
+    )
+    best_score = max(
+        (r["score"] for s in streams for r in s),
+        default=None,
+    )
     # "Does the winning prompt look like gibberish?" -- the natural-language
     # counterpart to GCG's suffix-perplexity defense diagnostic. PAIR prompts
     # should look like ordinary (if devious) English, unlike GCG's suffixes.
@@ -220,6 +231,8 @@ def main():
         "target": target,
         "best_prompt": best_prompt,
         "final_response": final_response,
+        "best_judge_score": best_score,
+        "final_judge_card": final_card,
         "success_prefix_match": success,
         "refusal": refusal,
         "best_prompt_perplexity": prompt_ppl,
@@ -238,7 +251,12 @@ def main():
     print(f"Queries used:     {n_queries} (<= {cfg.n_streams * cfg.n_iterations} budget)")
     print(f"Best prompt:      {best_prompt!r}")
     print(f"Final response:   {final_response[:200]!r}")
+    print(f"Best judge score: {best_score}/10" if best_score is not None else "Best judge score: n/a")
     print(f"Success (ASR):    {success}")
+    print(f"Engaged (ladder): {final_card['engaged']}  "
+          f"(coverage={final_card['goal_coverage']:.2f}, "
+          f"novelty={final_card['novel_content']:.2f}, "
+          f"degenerate={final_card['degenerate']})")
     print(f"Refusal detected: {refusal}")
     print(f"Prompt PPL:       {prompt_ppl:.2f}  (plain goal PPL: {goal_ppl:.2f})")
     cps = account_dict["cost_per_success_usd"]
