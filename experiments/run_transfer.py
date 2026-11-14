@@ -130,6 +130,10 @@ def main():
         dataset_source = args.data
     else:
         goals, targets = cfg.goals, cfg.targets
+    if not 0 <= args.pair_index < len(goals):
+        raise SystemExit(
+            f"--pair-index {args.pair_index} is out of range for {len(goals)} pair(s)"
+        )
     goal, target = goals[args.pair_index], targets[args.pair_index]
 
     t_load = time.perf_counter()

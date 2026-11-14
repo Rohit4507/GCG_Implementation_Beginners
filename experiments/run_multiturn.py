@@ -107,11 +107,16 @@ def main():
         dataset_source = args.data
     else:
         goals, targets = cfg.goals, cfg.targets
+    if not 0 <= args.pair_index < len(goals):
+        raise SystemExit(
+            f"--pair-index {args.pair_index} is out of range for {len(goals)} pair(s)"
+        )
     goal, target = goals[args.pair_index], targets[args.pair_index]
     # Evaluation uses the benign remainder so the fixed suffix is scored on
     # held-out goals rather than the one it was optimised on.
-    eval_goals = [g for i, g in enumerate(goals) if i != args.pair_index]
-    eval_targets = [t for i, t in enumerate(targets) if i != args.pair_index]
+    eval_indices = [i for i in range(len(goals)) if i != args.pair_index]
+    eval_goals = [goals[i] for i in eval_indices]
+    eval_targets = [targets[i] for i in eval_indices]
 
     # ---- Model ----
     t_load = time.perf_counter()
@@ -161,7 +166,7 @@ def main():
     single_eval = evaluate_pairs(
         model, tokenizer, eval_goals, eval_targets, single_suffix,
         max_new_tokens=args.max_new_tokens, temperature=cfg.temperature,
-        device=device,
+        device=device, pair_indices=eval_indices,
     )
 
     # ---- Multi-turn attack ----
@@ -171,7 +176,7 @@ def main():
     multi_eval = evaluate_pairs(
         model, tokenizer, eval_goals, eval_targets, multi_suffix,
         max_new_tokens=args.max_new_tokens, temperature=cfg.temperature,
-        device=device, prior_turns=prior_turns,
+        device=device, prior_turns=prior_turns, pair_indices=eval_indices,
     )
 
     # ---- Compare ----

@@ -24,6 +24,8 @@ Open **`real_model_runbook.ipynb`** — it is the executable version of this pag
      Fine-grained tokens → New token
    * Scope: **repository contents: read and write** on your repo only
    * Kaggle → Add-ons → Secrets → add a secret named **`GITHUB_TOKEN`**
+   * *(Optional, only if running gated models like `meta-llama/Llama-3.2-1B-Instruct`:
+     also add **`HF_TOKEN`** after accepting the model licence on Hugging Face.)*
 6. **Upload the notebook:** File → Import Notebook → `real_model_runbook.ipynb`, or
    paste the cells manually.
 7. In the notebook, set `REPO_URL` to your repository.
@@ -58,23 +60,29 @@ to burn 10 hours debugging on GPU when the same bug would have appeared in
 ```
 1. run_smoke + unit tests           ~10 s   prove the code is correct
 2. --steps 5 timing probe           ~3 min  decide what actually fits
-3. rescore (section 9b)             ~30 s   what the numbers mean, no GPU
-4. Gate 1: one real attack          ~10 min first non-zero ASR, or the bug
-5. no-attack control                ~5 min  decide whether an ASR means anything
-6. Algorithm 2 universal × 3 models ~6-12 h the main results table
-7. Transfer matrix (2×T4)           ~1 h    generation only, cheap
-8. Multi-turn (3-turn)              ~2-3 h  the plan's missing comparison
-9. Baselines (random search)        ~1-2 h  context for every number
+3. Gate 1: one real attack (500 st) ~3.8 h  first non-zero ASR / engagement
+4. no-attack control (section 4b)   ~5 min  decide whether an ASR means anything
+5. per-prompt ASR (4c, optional)    ~5.7 h  3 prompts × 250 steps
+6. Algorithm 2 universal            ~6-8 h  7 train + 3 held-out @ 250 steps (per model)
+7. Transfer matrix (2×T4)           ~3.8 h  500 steps on source + target eval
+8. Multi-turn (3-turn)              ~3.8 h  250 steps × 2 (~7.5 h at 500 steps)
+9. Baselines: random search + PAIR  ~3-4 h  random search (~3 h @ 250 st) + PAIR (~10 min)
+10. rescore + build_report (sec 9)  ~30 s   ladder scorecards + docs/index.html (no GPU)
 ```
 
-**Step 5 is a gate, not a formality.** If the model complies about as often with
+**Step 4 is a gate, not a formality.** If the model complies about as often with
 no attack as with an optimised suffix, then the suffix is not what caused the
 compliance and calling it a jailbreak is wrong. Run `experiments/run_control.py`
 before writing down any ASR. It runs no optimisation, so it is cheap.
 
 **Step 2 is not optional.** If one step takes 60 s, 500 steps is 8 hours for a
-*single* prompt, and the 25-prompt table will not fit. Find that out in minute
-three, not hour ten. Adjust model size or prompt count, then continue.
+*single* prompt, and a multi-prompt table will not fit inside Kaggle's 9–12 h
+session limit. Find that out in minute three, not hour ten. Adjust model size or
+prompt count, then continue.
+
+**Split across sessions.** A full single-model sweep (~20+ h at T4 speeds)
+exceeds one 9–12 h session, so run Gate 1 + Control + PAIR in session 1,
+Algorithm 2 in session 2, and Transfer / Multi-turn in session 3.
 
 ---
 
@@ -83,15 +91,15 @@ three, not hour ten. Adjust model size or prompt count, then continue.
 Three options, best first:
 
 1. **Git push-back (recommended).** With `GITHUB_TOKEN` set, the last cell of
-   the runbook commits and pushes. The commits are genuinely made from Kaggle,
-   under your git identity.
+   the runbook commits and pushes (rebuilding `docs/index.html` and scorecards
+   first). The commits are genuinely made from Kaggle, under your git identity.
 2. **Save Version.** Top-right → Save Version → Quick Save. Everything under
    `/kaggle/working` is kept in the Output tab, downloadable.
 3. **Manual download.** Right sidebar → Output → pick files. Fine for the small
    `results/reports/generated/*.json` records.
 
-Copy results into `/kaggle/working` before saving — the runbook's last-but-one
-cell does this.
+Copy `results` and `docs` into `/kaggle/working` before saving — the runbook's
+section 9d cell does this.
 
 ---
 

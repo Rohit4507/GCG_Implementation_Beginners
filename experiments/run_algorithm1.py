@@ -99,7 +99,7 @@ def parse_args():
 
 
 def evaluate_subset(model, tokenizer, goals, targets, suffix, cfg, args, device,
-                    index_offset=0):
+                    index_offset=0, pair_indices=None):
     """
     `evaluate_pairs` on a subset, or None when the subset is empty.
 
@@ -115,6 +115,7 @@ def evaluate_subset(model, tokenizer, goals, targets, suffix, cfg, args, device,
         temperature=cfg.temperature,
         device=device,
         index_offset=index_offset,
+        pair_indices=pair_indices,
     )
 
 
@@ -247,7 +248,7 @@ def main():
             ev_tr = evaluate_subset(
                 model, tokenizer, [goals[j] for j in others],
                 [targets[j] for j in others], best_suffix,
-                cfg, args, device, index_offset=None if not others else others[0],
+                cfg, args, device, pair_indices=others,
             )
 
             per_prompt.append({
@@ -306,7 +307,7 @@ def main():
         ev_tr = evaluate_subset(
             model, tokenizer, [goals[j] for j in others],
             [targets[j] for j in others], best_suffix,
-            cfg, args, device, index_offset=None if not others else others[0],
+            cfg, args, device, pair_indices=others,
         )
         eval_result, transfer_result = ev_in, ev_tr
         summary_goal, summary_target = goal, target
