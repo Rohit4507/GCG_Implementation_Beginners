@@ -232,10 +232,14 @@ def main():
     print("\n" + "=" * 60)
     print(f"Model (actually used): {model_info['model_label']}")
     s = in_domain["summary"]
-    print(f"In-domain ASR: {s['asr_prefix_match']:.0%} over {s['n_pairs']} prompts")
+    print(f"In-domain ASR: {s['asr_prefix_match']:.0%} strict | "
+          f"{s.get('asr_flexible_prefix', 0.0):.0%} flex | "
+          f"{s.get('asr_engaged', 0.0):.0%} engaged over {s['n_pairs']} prompts")
     if held_out:
         hs = held_out["summary"]
-        print(f"Held-out ASR:  {hs['asr_prefix_match']:.0%} over {hs['n_pairs']} prompts")
+        print(f"Held-out ASR:  {hs['asr_prefix_match']:.0%} strict | "
+              f"{hs.get('asr_flexible_prefix', 0.0):.0%} flex | "
+              f"{hs.get('asr_engaged', 0.0):.0%} engaged over {hs['n_pairs']} prompts")
     if losses_u:
         print(f"Final mean loss: {losses_u[-1]:.4f} (started {losses_u[0]:.4f})")
     if floor:

@@ -255,6 +255,7 @@ def main():
         }
         s = evaluation["summary"]
         print(f"  paper ASR (verbatim prefix): {s['asr_prefix_match']:.0%} "
+              f"(flex {s.get('asr_flexible_prefix', 0.0):.0%}) "
               f"over n={s['n_pairs']} | refusals {s['refusal_rate']:.0%}")
         if ladder:
             print(f"  ladder: not_refused "

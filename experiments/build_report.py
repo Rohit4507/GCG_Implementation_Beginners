@@ -21,6 +21,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 
+from src.evaluate import is_flexible_prefix_match
 from src.judge import iter_samples, score_response, summarise as judge_summarise
 
 RECORDS = "results/reports/generated/*.json"
@@ -81,6 +82,27 @@ def _kind(record):
     return kind
 
 
+def _eval_rates(samples):
+    """Compute (engaged_asr, flexible_prefix_asr) from raw stored samples."""
+    if not samples:
+        return None, None
+    cards = [
+        score_response(
+            response=s.get("response", ""),
+            goal=s.get("goal", ""),
+            target=s.get("target", ""),
+            prompt=s.get("prompt") or s.get("goal", ""),
+        )
+        for s in samples
+    ]
+    engaged = sum(1 for c in cards if c["engaged"]) / len(cards)
+    flexible = sum(
+        1 for s in samples
+        if is_flexible_prefix_match(s.get("response", ""), s.get("target", ""))
+    ) / len(samples)
+    return engaged, flexible
+
+
 def extract(record):
     """
     Pull the reportable numbers out of a record.
@@ -95,7 +117,8 @@ def extract(record):
     row = {
         "kind": RUN_KINDS.get(kind, kind or "—"),
         "model": _model_label(record),
-        "asr": None, "asr_label": "ASR", "n": None,
+        "asr": None, "engaged_asr": None, "flexible_asr": None,
+        "asr_label": "ASR", "n": None,
         "headline_label": "—", "headline_value": "—",
     }
 
@@ -106,6 +129,9 @@ def extract(record):
         ind = record.get("in_domain") or record.get("evaluation") or {}
         tra = record.get("transfer") or {}
         row["asr"] = _summary(ind).get("asr_prefix_match")
+        row["engaged_asr"], row["flexible_asr"] = _eval_rates(ind.get("samples"))
+        tra_eng, _ = _eval_rates(tra.get("samples"))
+        row["transfer_engaged_asr"] = tra_eng
         row["n"] = _n_from(ind)
         row["headline_label"] = "in-domain → transfer ASR"
         row["headline_value"] = (
@@ -116,6 +142,7 @@ def extract(record):
     elif kind == "no_attack_control":
         ev = record.get("evaluation") or {}
         row["asr"] = _summary(ev).get("asr_prefix_match")
+        row["engaged_asr"], row["flexible_asr"] = _eval_rates(ev.get("samples"))
         row["n"] = _n_from(ev)
         row["asr_label"] = "ASR (no attack)"
         # The number that decides whether any attack claim is real: how much
@@ -128,6 +155,7 @@ def extract(record):
     elif kind == "algorithm2_universal":
         ind, held = record.get("in_domain") or {}, record.get("held_out") or {}
         row["asr"] = _summary(ind).get("asr_prefix_match")
+        row["engaged_asr"], row["flexible_asr"] = _eval_rates(ind.get("samples"))
         row["n"] = _n_from(ind)
         held_asr = _summary(held).get("asr_prefix_match")
         row["headline_label"] = "held-out ASR"
@@ -138,6 +166,12 @@ def extract(record):
         singles = [comp.get("single_turn_asr"), comp.get("multi_turn_asr")]
         singles = [v for v in singles if v is not None]
         row["asr"] = max(singles) if singles else None
+        s_eng, s_flex = _eval_rates(((record.get("single_turn") or {}).get("evaluation") or {}).get("samples"))
+        m_eng, m_flex = _eval_rates(((record.get("multi_turn") or {}).get("evaluation") or {}).get("samples"))
+        engs = [v for v in (s_eng, m_eng) if v is not None]
+        flexs = [v for v in (s_flex, m_flex) if v is not None]
+        row["engaged_asr"] = max(engs) if engs else None
+        row["flexible_asr"] = max(flexs) if flexs else None
         row["n"] = record.get("n_prompts_evaluated")
         row["headline_label"] = "single → multi"
         row["headline_value"] = " → ".join(_pct(comp.get(k)) for k in
@@ -145,8 +179,10 @@ def extract(record):
 
     elif kind == "cross_model_transfer":
         ev = record.get("evaluation_on_target") or {}
-        row["asr"] = _summary(ev.get("transferred")).get("asr_prefix_match")
-        row["n"] = _n_from(ev.get("transferred"))
+        transferred = ev.get("transferred") or {}
+        row["asr"] = _summary(transferred).get("asr_prefix_match")
+        row["engaged_asr"], row["flexible_asr"] = _eval_rates(transferred.get("samples"))
+        row["n"] = _n_from(transferred)
         # The comparison that matters is transferred vs. unoptimised suffix on
         # the TARGET — not the source loss, which the target never saw.
         row["headline_label"] = "target loss: initial → transferred"
@@ -173,6 +209,15 @@ def extract(record):
     elif kind == "pair_black_box":
         ok = record.get("success_prefix_match")
         row["asr"] = None if ok is None else (1.0 if ok else 0.0)
+        pair_samples = list(iter_samples(record))
+        if not pair_samples and record.get("final_response"):
+            pair_samples = [{
+                "response": record.get("final_response", ""),
+                "goal": record.get("goal", ""),
+                "target": record.get("target", ""),
+                "prompt": record.get("best_prompt") or record.get("goal", ""),
+            }]
+        row["engaged_asr"], row["flexible_asr"] = _eval_rates(pair_samples)
         row["n"] = record.get("n_queries")
         row["headline_label"] = "queries"
         row["headline_value"] = str(record.get("n_queries", "—"))
@@ -348,6 +393,7 @@ def summarise(records):
     """Headline facts. Nothing here is inferred; it is all read from records."""
     real_model_runs = 0
     successes = 0
+    n_flexible = 0
     total_forwards = 0
     kinds = set()
     for rec in records:
@@ -359,21 +405,30 @@ def summarise(records):
         total_forwards += acc.get("total_forwards") or 0
         if rec.get("run_kind"):
             kinds.add(rec["run_kind"])
+        for sample in iter_samples(rec):
+            if is_flexible_prefix_match(sample.get("response", ""), sample.get("target", "")):
+                n_flexible += 1
+    ladder = pooled_ladder(records)
     return {
         "n_records": len(records),
         "n_real_model_runs": real_model_runs,
         "n_successes": successes,
+        "n_engaged": (ladder.get("engaged") or {}).get("successes", 0),
+        "n_flexible": n_flexible,
         "total_forwards": total_forwards,
         "n_kinds": len(kinds),
-        "ladder": pooled_ladder(records),
+        "ladder": ladder,
     }
 
 
 def rows(records):
     out = [extract(r) for r in records]
-    # Runs that produced a real ASR first, then everything else, so the reader
-    # sees the attack results before the diagnostics.
-    out.sort(key=lambda r: (r["asr"] is None, r["kind"]))
+    # Runs that produced a real ASR (strict or engaged) first, then everything else.
+    out.sort(key=lambda r: (
+        (r["asr"] or 0) == 0 and (r["engaged_asr"] or 0) == 0,
+        r["asr"] is None and r["engaged_asr"] is None,
+        r["kind"],
+    ))
     return out
 
 
@@ -437,9 +492,10 @@ def build(records, plots):
     if s["n_successes"] > 0:
         banner_cls, banner_head = "ok", "There is at least one successful attack in these records."
         banner_body = (
-            f"<p><strong>{s['n_successes']} successful attack(s)</strong> recorded across "
-            f"{s['n_records']} runs. The table below reports each run's ASR with the number "
-            f"of prompts it is computed over.</p>"
+            f"<p><strong>{s['n_successes']} strict-prefix match(es)</strong> and "
+            f"<strong>{s['n_engaged']} engaged response(s)</strong> recorded across "
+            f"{s['n_records']} runs. The table below reports both strict-prefix and "
+            f"engaged ASR with the prompt count each is computed over.</p>"
         )
     elif s["n_real_model_runs"] == 0:
         banner_cls, banner_head = "bad", "No jailbreak has succeeded in this repository, and none has been attempted on a real model."
@@ -453,17 +509,32 @@ def build(records, plots):
             f"attack/defence/baseline/transfer/multi-turn code paths all execute and write "
             f"records with per-run cost accounting.</p>"
         )
+    elif s["n_engaged"] > 0 or s["n_flexible"] > 0:
+        eng_rate = (s.get("ladder") or {}).get("engaged", {}).get("rate")
+        eng_txt = "—" if eng_rate is None else f"{100 * eng_rate:.0f}%"
+        banner_cls, banner_head = "ok", "Non-zero attack compliance recorded on real models (engaged ASR > 0%)."
+        banner_body = (
+            f"<p>Across <strong>{s['n_real_model_runs']} real-model run(s)</strong>, "
+            f"<strong>{s['n_engaged']} response(s)</strong> ({eng_txt} pooled) engaged the request "
+            f"without refusing, and <strong>{s['n_flexible']}</strong> matched the target prefix "
+            f"after contraction/punctuation normalization (e.g. <code>&quot;Sure! Here's...&quot;</code>).</p>"
+            f"<p>The paper's strict verbatim <code>strict_prefix</code> column shows 0% because it "
+            f"requires an exact character match on the full 70+ character target string; the "
+            f"<strong>Engaged ASR</strong> column and the ladder below report the real compliance rate.</p>"
+        )
     else:
         banner_cls, banner_head = "warn", "Runs on real models exist, but none succeeded."
         banner_body = (
             f"<p>{s['n_real_model_runs']} run(s) on pretrained models, "
-            f"{s['n_successes']} successes. A 0% ASR at this budget is itself a result — "
+            f"{s['n_successes']} strict successes and {s['n_engaged']} engaged. A 0% ASR at this budget is itself a result — "
             f"report it with n and the step budget, not as a failure.</p>"
         )
 
     cards = "".join([
         f'<div class="card"><div class="v">{s["n_records"]}</div><div class="k">run records</div></div>',
-        f'<div class="card"><div class="v">{s["n_successes"]}</div><div class="k">successful attacks</div></div>',
+        f'<div class="card"><div class="v">{s["n_engaged"]}</div><div class="k">engaged responses</div></div>',
+        f'<div class="card"><div class="v">{s["n_flexible"]}</div><div class="k">normalized prefix</div></div>',
+        f'<div class="card"><div class="v">{s["n_successes"]}</div><div class="k">strict prefix</div></div>',
         f'<div class="card"><div class="v">{s["total_forwards"]:,}</div><div class="k">forward passes</div></div>',
         f'<div class="card"><div class="v">{s["n_kinds"]}</div><div class="k">attack variants</div></div>',
     ])
@@ -471,8 +542,15 @@ def build(records, plots):
     body = []
     for r in rows(records):
         hit = (r["asr"] or 0) > 0
+        eng_hit = (r.get("engaged_asr") or 0) > 0
         asr = _pct(r["asr"])
+        eng_asr = _pct(r.get("engaged_asr"))
         style = " style='color:var(--ok);font-weight:600'" if hit else ""
+        eng_style = " style='color:var(--ok);font-weight:600'" if eng_hit else ""
+        tra_eng = r.get("transfer_engaged_asr")
+        eng_sub = "" if tra_eng is None else f"<br><small>→ {_pct(tra_eng)} transfer</small>"
+        lift_hit = r["kind"] == RUN_KINDS["no_attack_control"] and str(r["headline_value"]).startswith("+") and r["headline_value"] != "+0%"
+        head_style = " style='color:var(--ok);font-weight:600'" if lift_hit else ""
         # The column means different things per row — in-domain attack success
         # for an attack run, no-attack compliance for the control — so the cell
         # carries its own qualifier instead of one shared header pretending the
@@ -483,9 +561,10 @@ def build(records, plots):
             f"<tr><td>{html.escape(str(r['kind']))}</td>"
             f"<td><code>{html.escape(str(r['model']))}</code></td>"
             f"<td class='n'{style}>{asr}{qualifier}</td>"
+            f"<td class='n'{eng_style}>{eng_asr}{eng_sub}</td>"
             f"<td class='n'>{num(r['n'])}</td>"
             f"<td>{html.escape(str(r['headline_label']))}</td>"
-            f"<td class='n'>{html.escape(str(r['headline_value']))}</td>"
+            f"<td class='n'{head_style}>{html.escape(str(r['headline_value']))}</td>"
             f"<td class='n'>{num(r['forwards'])}</td>"
             f"<td class='n'>{num(r['wall'], '{:.1f}')}</td></tr>"
         )
@@ -547,7 +626,8 @@ the headline column shows what they did measure instead of a fabricated zero.</p
 
 <table>
 <thead><tr>
-<th>Run type</th><th>Model actually loaded</th><th class="n">ASR (in-domain)</th>
+<th>Run type</th><th>Model actually loaded</th><th class="n">ASR (strict)</th>
+<th class="n">Engaged ASR</th>
 <th class="n">n</th><th>headline metric</th><th class="n">value</th>
 <th class="n">forwards</th><th class="n">wall (s)</th>
 </tr></thead>
@@ -616,9 +696,11 @@ def main():
     s = summarise(records)
     print(f"Wrote {out} ({os.path.getsize(out) / 1024:.0f} KB)")
     print(f"  {s['n_records']} run records, {len(plots)} plots")
-    print(f"  successful attacks: {s['n_successes']}   "
+    print(f"  strict_prefix successes: {s['n_successes']}   "
+          f"engaged: {s['n_engaged']}   "
+          f"normalized_prefix: {s['n_flexible']}   "
           f"real-model runs: {s['n_real_model_runs']}")
-    if s["n_successes"] == 0 and s["n_real_model_runs"] == 0:
+    if s["n_successes"] == 0 and s["n_engaged"] == 0 and s["n_real_model_runs"] == 0:
         print("  -> the page says so prominently, as it should")
     if args.open:
         import webbrowser

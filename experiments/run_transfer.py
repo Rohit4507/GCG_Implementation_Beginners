@@ -244,16 +244,18 @@ def main():
         json.dump(run, f, indent=2)
     print(f"\nSaved run record to {path}")
 
-    print("\n" + "=" * 66)
+    print("\n" + "=" * 76)
     print(f"Source (attacked) : {model_infos['source']['model_label']}")
     print(f"Target (transfer) : {model_infos['target']['model_label']}")
     print("Transfer evaluation on TARGET model:")
-    print(f"{'variant':>20} | {'target loss':>11} | {'ASR':>5} | {'refusal':>7}")
+    print(f"{'variant':>20} | {'target loss':>11} | {'ASR':>5} | {'engaged':>7} | {'refusal':>7}")
     for name, e in evaluation.items():
+        sm = e["summary"]
         print(f"{name:>20} | {e['mean_target_loss']:>11.4f} | "
-              f"{e['summary']['asr_prefix_match']:>4.0%} | "
-              f"{e['summary']['refusal_rate']:>6.0%}")
-    print("=" * 66)
+              f"{sm['asr_prefix_match']:>4.0%} | "
+              f"{sm.get('asr_engaged', 0.0):>6.0%} | "
+              f"{sm['refusal_rate']:>6.0%}")
+    print("=" * 76)
     tl = evaluation["transferred"]["mean_target_loss"]
     il = evaluation["initial"]["mean_target_loss"]
     if tl < il:
