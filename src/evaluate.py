@@ -155,6 +155,7 @@ def evaluate_pairs(
     device: str = "cuda",
     prior_turns: Optional[List[Dict]] = None,
     index_offset: int = 0,
+    pair_indices: Optional[List[int]] = None,
 ) -> Dict:
     """
     Run generation with the optimized suffix on every (goal, target) pair
@@ -167,6 +168,8 @@ def evaluate_pairs(
     Returns {"samples": [...], "summary": {...}}.
     """
     assert len(goals) == len(targets)
+    if pair_indices is not None:
+        assert len(pair_indices) == len(goals)
     samples = []
 
     for i, (goal, target) in enumerate(zip(goals, targets)):
@@ -183,8 +186,8 @@ def evaluate_pairs(
         samples.append({
             # Index into the *caller's* list, not this call's. A per-prompt run
             # evaluates one prompt at a time and then pools; without an offset
-            # every pooled sample would claim to be pair 0.
-            "pair_index": index_offset + i,
+            # or explicit pair_indices, pooled/transfer samples get the wrong index.
+            "pair_index": pair_indices[i] if pair_indices is not None else index_offset + i,
             "goal": goal,
             "target": target,
             "response": response,

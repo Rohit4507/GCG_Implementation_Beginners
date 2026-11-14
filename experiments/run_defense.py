@@ -51,10 +51,12 @@ def main():
         cfg.model_id = args.model
     if args.steps:
         cfg.num_steps = args.steps
+    cfg.load_in_4bit = args.load_in_4bit
     torch.manual_seed(cfg.seed)
 
+    dataset_source = "preset goals (src/config.py)"
     if args.benchmark:
-        goals, targets = load_benchmark_pairs(n=1)
+        goals, targets, dataset_source = load_benchmark_pairs(n=1, return_source=True)
     else:
         goals, targets = cfg.goals[:1], cfg.targets[:1]
     goal, target = goals[0], targets[0]
@@ -121,10 +123,7 @@ def main():
         json.dump({
             "run_kind": "perplexity_defense",
             "model": model_info,
-            "dataset_source": (
-                "bundled sample (data/advbench_sample.jsonl)" if args.benchmark
-                else "preset goals (src/config.py)"
-            ),
+            "dataset_source": dataset_source,
             "random_guess_floor": loss_floor(model_info.get("vocab_size")),
             "goal": goal,
             "loss_first": loss_history[0],
