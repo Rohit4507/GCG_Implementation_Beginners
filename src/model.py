@@ -23,6 +23,10 @@ def resolve_dtype(dtype: str, device: str) -> torch.dtype:
     }[dtype]
 
 
+def _is_cuda_device(device: str) -> bool:
+    return device == "cuda" or device.startswith("cuda:")
+
+
 def load_model_and_tokenizer(
     model_id: str,
     dtype: str = "float16",
@@ -42,14 +46,20 @@ def load_model_and_tokenizer(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    kwargs = dict(
-        torch_dtype=torch_dtype,
-        device_map="auto" if device == "cuda" else None,
-        trust_remote_code=True,
-    )
+    import transformers
+    ver_parts = []
+    for part in transformers.__version__.split(".")[:2]:
+        digits = "".join(ch for ch in part if ch.isdigit())
+        ver_parts.append(int(digits) if digits else 0)
+    dtype_key = "dtype" if tuple(ver_parts) >= (4, 56) else "torch_dtype"
+
+    kwargs = {
+        dtype_key: torch_dtype,
+        "trust_remote_code": True,
+    }
 
     if load_in_4bit:
-        if device == "cuda":
+        if _is_cuda_device(device):
             from transformers import BitsAndBytesConfig
             kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -57,11 +67,20 @@ def load_model_and_tokenizer(
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=torch.bfloat16,
             )
+            target = (
+                f"cuda:{torch.cuda.current_device()}"
+                if device == "cuda" and torch.cuda.is_available()
+                else device
+            )
+            # Pin 4-bit weights to a single GPU so multi-GPU setups (e.g. Kaggle 2xT4)
+            # do not split a small model across cuda:0 and cuda:1 and trigger device
+            # mismatches or accelerate-hook errors.
+            kwargs["device_map"] = {"": target}
         else:
             print("[model] load_in_4bit ignored: bitsandbytes requires CUDA")
 
     model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
-    if device != "cuda" or "quantization_config" not in kwargs:
+    if "device_map" not in kwargs:
         model = model.to(device)
     model.eval()
     return model, tokenizer

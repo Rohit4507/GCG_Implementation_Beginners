@@ -50,7 +50,7 @@ def score_record(path: str) -> Dict:
             response=s.get("response", ""),
             goal=s.get("goal", ""),
             target=s.get("target", ""),
-            prompt=s.get("goal", ""),  # the goal is the user turn; used for echo detection
+            prompt=s.get("prompt") or s.get("goal", ""),
         )
         card["_path"] = s.get("_path", "")
         samples.append(card)

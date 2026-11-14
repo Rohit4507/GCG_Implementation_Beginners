@@ -118,7 +118,7 @@ def suffix_perplexity(
     pred_logits = logits[:, before.shape[1] - 1: before.shape[1] - 1 + L, :]
     nll = F.cross_entropy(
         pred_logits.reshape(-1, pred_logits.shape[-1]),
-        suffix_ids.reshape(-1),
+        suffix_ids.reshape(-1).to(pred_logits.device),
         reduction="mean",
     )
     return math.exp(nll.item())
@@ -133,7 +133,7 @@ def text_perplexity(model, tokenizer, text: str, device: str) -> float:
     logits = model(input_ids=ids).logits
     nll = F.cross_entropy(
         logits[:, :-1, :].reshape(-1, logits.shape[-1]),
-        ids[:, 1:].reshape(-1),
+        ids[:, 1:].reshape(-1).to(logits.device),
         reduction="mean",
     )
     return math.exp(nll.item())

@@ -249,6 +249,33 @@ class TestIterSamples(unittest.TestCase):
         sample = next(iter(iter_samples(record)))
         self.assertIn("evaluation", sample["_path"])
 
+    def test_inherits_top_level_goal_and_target_into_pair_streams(self):
+        record = {
+            "run_kind": "pair_black_box",
+            "goal": GOAL,
+            "target": TARGET,
+            "streams": [[
+                {"iteration": 0, "prompt": "reframed prompt", "response": COMPLIANT, "score": 5},
+            ]],
+        }
+        sample = next(iter(iter_samples(record)))
+        self.assertEqual(sample["goal"], GOAL)
+        self.assertEqual(sample["target"], TARGET)
+        card = score_response(
+            sample["response"], sample["goal"], sample["target"], sample["prompt"],
+        )
+        self.assertTrue(card["engaged"])
+
+    def test_sample_level_goal_is_not_overwritten_by_parent(self):
+        record = {
+            "goal": "parent goal",
+            "target": "parent target",
+            "samples": [{"goal": "own goal", "target": "own target", "response": "r"}],
+        }
+        sample = next(iter(iter_samples(record)))
+        self.assertEqual(sample["goal"], "own goal")
+        self.assertEqual(sample["target"], "own target")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -233,7 +233,7 @@ def pooled_ladder(records):
                 response=sample.get("response", ""),
                 goal=sample.get("goal", ""),
                 target=sample.get("target", ""),
-                prompt=sample.get("goal", ""),
+                prompt=sample.get("prompt") or sample.get("goal", ""),
             ))
     return judge_summarise(cards)
 
