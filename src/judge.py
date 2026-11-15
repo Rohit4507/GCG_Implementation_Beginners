@@ -315,7 +315,14 @@ def iter_samples(
             sample["_path"] = path
             yield sample
             return
+        skip_dup_eval = (
+            node.get("run_kind") == "no_attack_control"
+            and isinstance(node.get("conditions"), dict)
+            and "no_attack" in node["conditions"]
+        )
         for key, value in node.items():
+            if skip_dup_eval and key == "evaluation":
+                continue
             yield from iter_samples(value, f"{path}/{key}", next_defaults)
     elif isinstance(node, list):
         for i, value in enumerate(node):
