@@ -276,6 +276,19 @@ class TestIterSamples(unittest.TestCase):
         self.assertEqual(sample["goal"], "own goal")
         self.assertEqual(sample["target"], "own target")
 
+    def test_no_attack_control_does_not_double_count_no_attack(self):
+        no_attack_eval = {"samples": [{"response": "no_attack_r"}]}
+        record = {
+            "run_kind": "no_attack_control",
+            "evaluation": no_attack_eval,
+            "conditions": {
+                "no_attack": {"evaluation": no_attack_eval},
+                "optimised": {"evaluation": {"samples": [{"response": "opt_r"}]}},
+            },
+        }
+        found = [s["response"] for s in iter_samples(record)]
+        self.assertEqual(found, ["no_attack_r", "opt_r"])
+
 
 if __name__ == "__main__":
     unittest.main()

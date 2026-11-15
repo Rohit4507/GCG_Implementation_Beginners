@@ -9,8 +9,8 @@
       "grad_loss_abs_diff": 0.0,
       "candidate_loss_max_abs_diff": 4.76837158203125e-07,
       "trajectory_max_abs_diff": 4.76837158203125e-07,
-      "time_plain_s": 0.09,
-      "time_kv_cache_s": 0.08,
+      "time_plain_s": 0.15,
+      "time_kv_cache_s": 0.14,
       "loss_first": 6.291787624359131,
       "loss_last": 6.271170616149902
     },
@@ -24,6 +24,8 @@
       "summary": {
         "n_pairs": 2,
         "asr_prefix_match": 0.0,
+        "asr_flexible_prefix": 0.0,
+        "asr_engaged": 0.0,
         "refusal_rate": 0.0
       },
       "note": "Tiny random model: ASR is expected to be ~0; this check only validates that the harness computes metrics."
