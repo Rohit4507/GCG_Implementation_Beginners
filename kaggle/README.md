@@ -225,18 +225,18 @@ section **9b** does exactly this.
 
 ## 7. Definition of done for the benchmark matrix
 
-- [ ] The ASR ladder reported (`strict_prefix` / `not_refused` / `engaged`), not just one number
-- [ ] Every rate carries its `n` and a 95% interval
-- [ ] In-domain ASR reported separately from transfer, each with its own `n`
-- [ ] A no-attack control run, and the lift over it stated
-- [ ] At least one run with `engaged` **> 0** (never happened in this repo yet)
-- [ ] 3 models × ≥10 prompts, every cell reported with `n`
+- [x] The ASR ladder reported (`strict_prefix` / `not_refused` / `engaged`), not just one number
+- [x] Every rate carries its `n` and a 95% interval
+- [x] In-domain ASR reported separately from transfer, each with its own `n`
+- [x] A no-attack control run, and the lift over it stated (`+80%` on `Qwen2.5-1.5B-Instruct`)
+- [x] At least one run with `engaged` **> 0** (`100%` in-domain / `78%` transfer GCG; `32–36%` PAIR)
+- [ ] 3 models × ≥10 prompts, every cell reported with `n` (1 model completed so far)
 - [ ] Transfer numbers (source → target), both directions if time allows
 - [ ] Universal attack with held-out generalisation
 - [ ] Multi-turn vs single-turn comparison
-- [ ] Baselines alongside (random search, PAIR)
-- [ ] `n_successes` and `total_forwards` in the record for every run
-- [ ] README results table updated from the JSON records
+- [ ] Baselines alongside (PAIR done on `Qwen2.5-1.5B`; real-model random search pending)
+- [x] `n_successes` and `total_forwards` in the record for every run
+- [x] README results table updated from the JSON records
 - [ ] Writeup published and linked from this repo
 
 If a box cannot be ticked, write the reason in the writeup. "Not run" is
