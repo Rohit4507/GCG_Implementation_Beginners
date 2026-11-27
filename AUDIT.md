@@ -1,3 +1,20 @@
+> **STATUS: HISTORICAL — superseded by the work after 12 Oct 2026.**
+>
+> This document records the state of the repository on **12 October 2026** and is
+> kept for provenance. Several of its findings have since been fixed or become
+> obsolete, and its headline conclusion ("no jailbreak has ever succeeded, every
+> ASR in `results/` is 0%, cost accounting does not exist") is **no longer true**:
+> cost accounting, multi-turn, real-model runs and the 3-rung judge all landed
+> afterwards. Read [`README.md`](README.md) for the current status, and the
+> "Known defects & caveats" section there for the open issues.
+>
+> It also contains external deadlines, amounts and programme details re-checked
+> on 12 Oct 2026. Those are third-party facts, not code properties, and they go
+> stale on their own schedule — re-verify before acting on them.
+>
+> Kept rather than deleted because the *method* (§2's defect log, §1's
+> "what the numbers mean and don't") is the reusable part.
+
 # Audit: `GCG_Implementation_Beginners` vs. the AI-red-teaming career plan
 
 **Date:** 12 October 2026 · **Scope:** this repository + the external facts the career

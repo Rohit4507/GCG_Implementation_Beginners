@@ -36,6 +36,9 @@ def parse_args():
     p.add_argument("--device", default="auto")
     p.add_argument("--load-in-4bit", action="store_true",
                    help="Load in 4-bit (needed for 7-8B models on a 16GB card)")
+    p.add_argument("--trust-remote-code", action="store_true",
+                   help="Allow executing Python shipped in the model repo. Off by "
+                        "default because --model is arbitrary text.")
     p.add_argument("--gpu-rate-usd-per-hour", type=float, default=0.0,
                    help="Marginal GPU cost, for cost accounting "
                         "(default 0.0 = free-tier compute)")
@@ -49,7 +52,7 @@ def main():
     cfg = GCGConfig(preset=args.preset)
     if args.model:
         cfg.model_id = args.model
-    if args.steps:
+    if args.steps is not None:
         cfg.num_steps = args.steps
     cfg.load_in_4bit = args.load_in_4bit
     torch.manual_seed(cfg.seed)
@@ -72,6 +75,7 @@ def main():
         print(f"Loading {cfg.model_id} ...")
         model, tokenizer = load_model_and_tokenizer(
             cfg.model_id, cfg.dtype, args.device, args.load_in_4bit,
+            trust_remote_code=args.trust_remote_code,
         )
         device = resolve_device(args.device)
     suffix_ids = init_suffix_ids(
@@ -81,6 +85,7 @@ def main():
     model_info = describe_model(
         tiny=args.tiny, model_id=cfg.model_id,
         tokenizer=tokenizer, seed=cfg.seed,
+        model=model, requested_4bit=args.load_in_4bit,
     )
     print(f"Model (actually used): {model_info['model_label']}")
     print(f"Optimizing suffix ({cfg.num_steps} steps) on: {goal!r}")

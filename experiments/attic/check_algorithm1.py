@@ -1,5 +1,6 @@
 """
-Development scratch script — superseded, kept for the record.
+Development scratch script — superseded, moved to experiments/attic/ for the
+record. Not imported by anything; not covered by CI.
 
 This was the first end-to-end exercise of Algorithm 1 against a real model,
 written before the experiment runners existed. `experiments/run_algorithm1.py`

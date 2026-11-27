@@ -107,7 +107,8 @@ section 9d cell does this.
 
 | Pitfall | Consequence | Fix |
 |---|---|---|
-| `pip install -r requirements.txt` | reinstalls torch, wastes ~10 min | runbook installs only `bitsandbytes accelerate datasets` |
+| `pip install -r requirements.txt` | reinstalls torch, wastes ~10 min | `pip install -r requirements-gpu.txt` only |
+| Using `--load-in-4bit` without bitsandbytes | **now a hard error**: `src/model.py` refuses to record an fp16 run as 4-bit (it used to load unquantized and misreport) | `pip install -r requirements-gpu.txt` before the run |
 | Internet left **Off** | `git clone` and model downloads both fail | Settings → Internet on (needs phone verification) |
 | Writing outside `/kaggle/working` | everything lost when the session ends | keep artefacts under `/kaggle/working` |
 | Jumping straight to 500 steps | session dies at hour 11 with nothing saved | run the `--steps 5` probe first |
@@ -214,6 +215,9 @@ python -m experiments.rescore results/reports/generated/transfer_*.json
 ```
 
 It prints the ladder and writes `results/reports/scorecards/<record>.json`.
+Each card also carries `attack_only_summary` (the same statistics with the
+`no_attack` / `initial_suffix` / `random_suffix` control conditions removed), so
+the dashboard's denominator is reproducible from the card alone.
 Every scorecard keeps its raw ingredients (`goal_coverage`, `novel_content`,
 `degenerate_reason`), so the thresholds stay labelling choices you can re-apply
 without re-running anything.

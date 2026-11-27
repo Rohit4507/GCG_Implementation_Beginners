@@ -32,7 +32,7 @@ from src.evaluate import (
 from src.judge import score_response
 from src.model import load_model_and_tokenizer, resolve_device
 from src.pair import chat_generate, run_pair
-from src.provenance import RunAccounting, count_successes, describe_model, loss_floor
+from src.provenance import RunAccounting, describe_model, loss_floor
 
 
 def parse_args():
@@ -50,6 +50,9 @@ def parse_args():
     p.add_argument("--device", default="auto")
     p.add_argument("--load-in-4bit", action="store_true",
                    help="Load in 4-bit (needed for 7-8B models on a 16GB card)")
+    p.add_argument("--trust-remote-code", action="store_true",
+                   help="Allow executing Python shipped in the model repo. Off by "
+                        "default because --model is arbitrary text.")
     p.add_argument("--gpu-rate-usd-per-hour", type=float, default=0.0,
                    help="Marginal GPU cost, for cost-per-success accounting "
                         "(default 0.0 = free-tier compute)")
@@ -69,9 +72,9 @@ def main():
         cfg.judge = args.judge
     if args.judge_model:
         cfg.judge_model_id = args.judge_model
-    if args.n_streams:
+    if args.n_streams is not None:
         cfg.n_streams = args.n_streams
-    if args.n_iterations:
+    if args.n_iterations is not None:
         cfg.n_iterations = args.n_iterations
     cfg.load_in_4bit = args.load_in_4bit
     torch.manual_seed(cfg.seed)
@@ -107,6 +110,7 @@ def main():
         print(f"Loading target model {cfg.model_id} ...")
         target_model, target_tokenizer = load_model_and_tokenizer(
             cfg.model_id, cfg.dtype, args.device, cfg.load_in_4bit,
+            trust_remote_code=args.trust_remote_code,
         )
         device = resolve_device(args.device)
         if same_attacker:
@@ -115,6 +119,7 @@ def main():
             print(f"Loading attacker model {cfg.attacker_model_id} ...")
             attacker_model, attacker_tokenizer = load_model_and_tokenizer(
                 cfg.attacker_model_id, cfg.dtype, args.device, cfg.load_in_4bit,
+                trust_remote_code=args.trust_remote_code,
             )
 
     judge_model, judge_tokenizer = None, None
@@ -124,6 +129,7 @@ def main():
         print(f"Loading judge model {cfg.judge_model_id} ...")
         judge_model, judge_tokenizer = load_model_and_tokenizer(
             cfg.judge_model_id, cfg.dtype, args.device, cfg.load_in_4bit,
+            trust_remote_code=args.trust_remote_code,
         )
 
     print(f"Goal:   {goal}\nTarget: {target!r}")
@@ -179,6 +185,7 @@ def main():
     model_info = describe_model(
         tiny=args.tiny, model_id=cfg.model_id,
         tokenizer=target_tokenizer, seed=cfg.seed,
+        model=target_model, requested_4bit=args.load_in_4bit,
     )
     account = RunAccounting(
         device=device,

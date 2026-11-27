@@ -52,7 +52,7 @@ from src.data import load_benchmark_pairs, load_pairs
 from src.evaluate import evaluate_pairs
 from src.judge import score_response, summarise as judge_summarise
 from src.model import init_suffix_ids, load_model_and_tokenizer, resolve_device
-from src.provenance import RunAccounting, count_successes, describe_model, loss_floor
+from src.provenance import RunAccounting, count_successes, describe_model
 
 RUN_KIND = "no_attack_control"
 ATTACK_SCOPE = "no optimisation; compliance measured without an attack"
@@ -67,6 +67,9 @@ def parse_args():
     p.add_argument("--num-prompts", type=int, default=None)
     p.add_argument("--device", default="auto")
     p.add_argument("--load-in-4bit", action="store_true")
+    p.add_argument("--trust-remote-code", action="store_true",
+                   help="Allow executing Python shipped in the model repo. Off by "
+                        "default because --model is arbitrary text.")
     p.add_argument("--max-new-tokens", type=int, default=128)
     p.add_argument("--gpu-rate-usd-per-hour", type=float, default=0.0)
     p.add_argument("--tiny", action="store_true",
@@ -142,7 +145,7 @@ def main():
     cfg = GCGConfig(preset=args.preset)
     if args.model:
         cfg.model_id = args.model
-    if args.num_prompts:
+    if args.num_prompts is not None:
         cfg.num_eval_prompts = args.num_prompts
     cfg.load_in_4bit = args.load_in_4bit
     if args.seed is not None:
@@ -180,10 +183,12 @@ def main():
         print(f"Loading {cfg.model_id} ...")
         model, tokenizer = load_model_and_tokenizer(
             cfg.model_id, cfg.dtype, args.device, cfg.load_in_4bit,
+            trust_remote_code=args.trust_remote_code,
         )
         device = resolve_device(args.device)
         model_info = describe_model(
             tiny=False, model_id=cfg.model_id, tokenizer=tokenizer, seed=cfg.seed,
+            model=model, requested_4bit=cfg.load_in_4bit,
         )
     model_load_s = time.perf_counter() - t_load
 

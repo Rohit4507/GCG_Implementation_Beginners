@@ -10,12 +10,28 @@ Usage:
     cfg = GCGConfig()                 # debug preset
     cfg = GCGConfig(preset="paper")   # paper preset
     cfg = GCGConfig(preset="paper", num_steps=50)  # explicit args win
+
+PRESET SEMANTICS
+----------------
+Every preset-controlled field defaults to ``None``. ``__post_init__`` fills
+each ``None`` from the chosen preset and leaves every explicitly-passed value
+alone.
+
+The first version of this class instead initialised the fields to the *debug*
+values and upgraded "any field still at its debug default" to the paper value.
+That cannot tell "the caller asked for 10 steps" from "the caller left the
+default", so ``GCGConfig(preset="paper", num_steps=10)`` silently became 250 —
+while the module docstring promised explicit arguments win. Since the README
+makes a point of 250 vs 500 steps changing comparability with published ASR,
+a config object that quietly rewrites an explicit optimisation budget is a
+reporting hazard, not a style nit.
 """
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-# Field defaults used by the "debug" preset. The "paper" preset only
-# upgrades fields that the caller left at these defaults.
+# Values for the "debug" preset (CPU-friendly) and the "paper" preset
+# (Zou et al., 2023). Both are applied in `__post_init__`; neither is a
+# dataclass field default, so an explicit argument can never be overwritten.
 DEBUG_DEFAULTS = {
     "num_steps": 10,
     "suffix_length": 8,
@@ -47,19 +63,19 @@ class GCGConfig:
     device: str = "auto"         # "auto" | "cuda" | "cpu"
     load_in_4bit: bool = False   # bitsandbytes 4-bit quantization (CUDA only)
 
-    # ---------- algorithm (set from preset in __post_init__) ----------
-    num_steps: int = DEBUG_DEFAULTS["num_steps"]          # T in Algorithm 1
-    suffix_length: int = DEBUG_DEFAULTS["suffix_length"]  # |s| in tokens
-    topk: int = DEBUG_DEFAULTS["topk"]                    # k candidates / position
-    search_width: int = DEBUG_DEFAULTS["search_width"]    # B sampled suffixes / step
-    mini_batch_size: int = DEBUG_DEFAULTS["mini_batch_size"]
+    # ---------- algorithm (None => taken from the preset in __post_init__) ----------
+    num_steps: Optional[int] = None          # T in Algorithm 1
+    suffix_length: Optional[int] = None      # |s| in tokens
+    topk: Optional[int] = None               # k candidates / position
+    search_width: Optional[int] = None       # B sampled suffixes / step
+    mini_batch_size: Optional[int] = None
 
     # ---------- suffix initialization ----------
     suffix_init: str = ""  # auto-filled with "! " * suffix_length if empty
 
     # ---------- universal attack (Algorithm 2) ----------
     num_prompts_start: int = 1  # start with this many prompts
-    prompt_add_interval: int = DEBUG_DEFAULTS["prompt_add_interval"]  # add one prompt every N steps
+    prompt_add_interval: Optional[int] = None  # add one prompt every N steps
 
     # ---------- data ----------
     # Optional jsonl file with {"goal": ..., "target": ...} records.
@@ -92,11 +108,12 @@ class GCGConfig:
         if self.preset not in ("debug", "paper"):
             raise ValueError(f"Unknown preset {self.preset!r}; use 'debug' or 'paper'")
 
-        # Upgrade any field still at its debug default to the paper value.
-        if self.preset == "paper":
-            for key, value in PAPER_DEFAULTS.items():
-                if getattr(self, key) == DEBUG_DEFAULTS[key]:
-                    setattr(self, key, value)
+        # Fill only the fields the caller left as None. Anything explicitly
+        # passed wins, which is what the docstring has always promised.
+        preset_values = PAPER_DEFAULTS if self.preset == "paper" else DEBUG_DEFAULTS
+        for key in preset_values:
+            if getattr(self, key) is None:
+                setattr(self, key, preset_values[key])
 
         # Make sure the initial suffix tokenizes to exactly suffix_length tokens.
         if not self.suffix_init:
@@ -165,11 +182,11 @@ class PAIRConfig:
     device: str = "auto"
     load_in_4bit: bool = False
 
-    # ---------- algorithm ----------
-    n_streams: int = PAIR_DEBUG_DEFAULTS["n_streams"]
-    n_iterations: int = PAIR_DEBUG_DEFAULTS["n_iterations"]
-    max_new_tokens_attacker: int = PAIR_DEBUG_DEFAULTS["max_new_tokens_attacker"]
-    max_new_tokens_target: int = PAIR_DEBUG_DEFAULTS["max_new_tokens_target"]
+    # ---------- algorithm (None => taken from the preset) ----------
+    n_streams: Optional[int] = None
+    n_iterations: Optional[int] = None
+    max_new_tokens_attacker: Optional[int] = None
+    max_new_tokens_target: Optional[int] = None
     temperature_attacker: float = 1.0  # attacker should explore -> sample
     temperature_target: float = 0.0    # target should be deterministic -> greedy
     judge: str = "keyword"             # "keyword" (offline heuristic) | "model"
@@ -201,10 +218,13 @@ class PAIRConfig:
         if self.judge not in ("keyword", "model"):
             raise ValueError(f"Unknown judge {self.judge!r}; use 'keyword' or 'model'")
 
-        if self.preset == "paper":
-            for key, value in PAIR_PAPER_DEFAULTS.items():
-                if getattr(self, key) == PAIR_DEBUG_DEFAULTS[key]:
-                    setattr(self, key, value)
+        # Same None-sentinel semantics as GCGConfig: an explicit argument wins.
+        preset_values = (
+            PAIR_PAPER_DEFAULTS if self.preset == "paper" else PAIR_DEBUG_DEFAULTS
+        )
+        for key in preset_values:
+            if getattr(self, key) is None:
+                setattr(self, key, preset_values[key])
 
         if len(self.goals) != len(self.targets):
             raise ValueError("goals and targets must have the same length")

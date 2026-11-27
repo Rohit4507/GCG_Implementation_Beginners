@@ -13,16 +13,26 @@ If any run in the records achieved ASR > 0, the page says so. If none did, the
 page says *that*, prominently. Those are the only two options.
 """
 import argparse
-import base64
 import glob
 import html
 import json
 import os
 import shutil
+import sys
 from datetime import datetime, timezone
 
-from src.evaluate import is_flexible_prefix_match
-from src.judge import iter_samples, score_response, summarise as judge_summarise
+# Same shim as experiments/rescore.py: `python experiments/build_report.py` is
+# the form shown in this module's own docstring and in Dockerfile's CMD style,
+# and without it the `src` package is not importable from the script's cwd.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.evaluate import is_flexible_prefix_match  # noqa: E402
+from src.judge import (  # noqa: E402
+    iter_reportable_samples,
+    iter_samples,
+    score_response,
+    summarise as judge_summarise,
+)
 
 RECORDS = "results/reports/generated/*.json"
 PLOTS_SRC = "results/plots"
@@ -198,7 +208,6 @@ def extract(record):
 
     elif kind == "perplexity_defense":
         ppl = record.get("perplexities") or {}
-        flagged = record.get("flagged_as_adversarial") or {}
         row["n"] = 1
         row["headline_label"] = "optimised suffix PPL"
         row["headline_value"] = (
@@ -261,7 +270,7 @@ def load_records():
 
 def pooled_ladder(records):
     """
-    Score every stored response under the multi-criterion judge and pool.
+    Score every *attack* response under the multi-criterion judge and pool.
 
     This is the number that stops a bare "0% ASR" from being the whole story.
     `strict_prefix` is what the repo used to report; `not_refused` is a hard
@@ -269,17 +278,24 @@ def pooled_ladder(records):
     cannot have complied. When the two disagree, the gap is the measurement
     problem, not the model's robustness, and the page has to say so.
 
+    The pool is deliberately not "every response in every record":
+    `src.judge.iter_reportable_samples` excludes the `no_attack` /
+    `initial_suffix` / `random_suffix` control conditions (they measure what
+    the model does with nothing attacking it) and the offline random-weight
+    records (no refusal behaviour exists to bypass). Averaging those in would
+    make the published compliance rate partly a measurement of the baseline.
+
     Scored from the responses already inside the records — no model, no GPU.
     """
-    cards = []
-    for rec in records:
-        for sample in iter_samples(rec):
-            cards.append(score_response(
-                response=sample.get("response", ""),
-                goal=sample.get("goal", ""),
-                target=sample.get("target", ""),
-                prompt=sample.get("prompt") or sample.get("goal", ""),
-            ))
+    cards = [
+        score_response(
+            response=sample.get("response", ""),
+            goal=sample.get("goal", ""),
+            target=sample.get("target", ""),
+            prompt=sample.get("prompt") or sample.get("goal", ""),
+        )
+        for sample in iter_reportable_samples(records)
+    ]
     return judge_summarise(cards)
 
 
@@ -405,9 +421,12 @@ def summarise(records):
         total_forwards += acc.get("total_forwards") or 0
         if rec.get("run_kind"):
             kinds.add(rec["run_kind"])
-        for sample in iter_samples(rec):
-            if is_flexible_prefix_match(sample.get("response", ""), sample.get("target", "")):
-                n_flexible += 1
+    # Counted over the same pool as the ladder, so the two numbers in the
+    # banner ("N engaged, M normalised-prefix") are always the same denominator.
+    reportable = iter_reportable_samples(records)
+    for sample in reportable:
+        if is_flexible_prefix_match(sample.get("response", ""), sample.get("target", "")):
+            n_flexible += 1
     ladder = pooled_ladder(records)
     return {
         "n_records": len(records),
@@ -415,6 +434,10 @@ def summarise(records):
         "n_successes": successes,
         "n_engaged": (ladder.get("engaged") or {}).get("successes", 0),
         "n_flexible": n_flexible,
+        "n_pooled": ladder.get("n", 0),
+        "n_pooled_all": len(list(
+            sample for rec in records for sample in iter_samples(rec)
+        )),
         "total_forwards": total_forwards,
         "n_kinds": len(kinds),
         "ladder": ladder,
@@ -521,6 +544,12 @@ def build(records, plots):
             f"<p>The paper's strict verbatim <code>strict_prefix</code> column shows 0% because it "
             f"requires an exact character match on the full 70+ character target string; the "
             f"<strong>Engaged ASR</strong> column and the ladder below report the real compliance rate.</p>"
+            f"<p><small>Denominator: <strong>{s['n_pooled']}</strong> attack responses. "
+            f"{s['n_pooled_all'] - s['n_pooled']} stored generations are excluded from this pool "
+            f"because they are not attacks — the <code>no_attack</code>, "
+            f"<code>initial_suffix</code> and <code>random_suffix</code> control conditions, and "
+            f"offline runs on the random-weight model. They still appear in the per-record table "
+            f"below and in every scorecard.</small></p>"
         )
     else:
         banner_cls, banner_head = "warn", "Runs on real models exist, but none succeeded."

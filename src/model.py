@@ -27,22 +27,80 @@ def _is_cuda_device(device: str) -> bool:
     return device == "cuda" or device.startswith("cuda:")
 
 
+class QuantizationUnavailable(RuntimeError):
+    """Raised when 4-bit was requested but could not be applied."""
+
+
+def _require_bitsandbytes():
+    """
+    Import bitsandbytes, or fail loudly.
+
+    `transformers` only *warns* when `quantization_config` asks for bitsandbytes
+    and the package is missing, then loads the model unquantized. On a 7-8B
+    model on a 16 GB card that is either an OOM or — worse — a silent fp16 run
+    that a run record would go on to describe as 4-bit.
+    """
+    try:
+        import bitsandbytes  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise QuantizationUnavailable(
+            "load_in_4bit was requested but bitsandbytes is not installed, so "
+            "the model would load unquantized. Install it with "
+            "`pip install 'bitsandbytes>=0.46'` (or requirements-gpu.txt), or "
+            "drop --load-in-4bit to record the run as fp16/bf16 honestly."
+        ) from exc
+
+
+def model_quantization(model, requested: bool) -> dict:
+    """
+    What quantization the returned model is *actually* in.
+
+    Run records use this instead of echoing the CLI flag, so a record can never
+    claim a 4-bit run that loaded fp16.
+    """
+    config = getattr(model, "config", None)
+    quant = getattr(config, "quantization_config", None)
+    ptype = None
+    if quant is not None:
+        ptype = (
+            quant.get("bnb_4bit_quant_type")
+            if isinstance(quant, dict)
+            else getattr(quant, "bnb_4bit_quant_type", None)
+        )
+    is_4bit = bool(getattr(model, "is_quantized", False)) or quant is not None
+    return {
+        "requested_4bit": bool(requested),
+        "applied_4bit": is_4bit,
+        "quant_type": ptype if is_4bit else None,
+        "weight_dtype": str(getattr(model, "dtype", "") or ""),
+    }
+
+
 def load_model_and_tokenizer(
     model_id: str,
     dtype: str = "float16",
     device: str = "auto",
     load_in_4bit: bool = False,
+    trust_remote_code: bool = False,
 ):
     """
     Load a causal LM and its tokenizer.
 
     4-bit bitsandbytes quantization is only attempted on CUDA; on CPU the
-    flag is ignored (with a warning) so scripts stay runnable everywhere.
+    flag is ignored (with a warning) so scripts stay runnable everywhere. If it
+    *is* attempted, a missing bitsandbytes raises `QuantizationUnavailable`
+    rather than silently loading an unquantized model.
+
+    `trust_remote_code` is off by default: `--model` is arbitrary text, and
+    this flag executes Python shipped inside the model repository. Every model
+    named in the docs loads without it.
     """
     device = resolve_device(device)
     torch_dtype = resolve_dtype(dtype, device)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_id, trust_remote_code=trust_remote_code,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -55,11 +113,12 @@ def load_model_and_tokenizer(
 
     kwargs = {
         dtype_key: torch_dtype,
-        "trust_remote_code": True,
+        "trust_remote_code": trust_remote_code,
     }
 
     if load_in_4bit:
         if _is_cuda_device(device):
+            _require_bitsandbytes()
             from transformers import BitsAndBytesConfig
             kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -83,6 +142,18 @@ def load_model_and_tokenizer(
     if "device_map" not in kwargs:
         model = model.to(device)
     model.eval()
+
+    # Belt and braces: if quantization was asked for and did not happen, stop
+    # here instead of writing a run record that misdescribes the model.
+    if load_in_4bit and _is_cuda_device(device):
+        actual = model_quantization(model, requested=True)
+        if not actual["applied_4bit"]:
+            raise QuantizationUnavailable(
+                f"{model_id} loaded WITHOUT 4-bit quantization even though "
+                "load_in_4bit was requested; refusing to record this as a "
+                "4-bit run."
+            )
+
     return model, tokenizer
 
 

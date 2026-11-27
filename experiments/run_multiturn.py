@@ -61,6 +61,9 @@ def parse_args():
                    help="Escalation messages before the attacked turn (default 2 = 3-turn attack)")
     p.add_argument("--device", default="auto")
     p.add_argument("--load-in-4bit", action="store_true")
+    p.add_argument("--trust-remote-code", action="store_true",
+                   help="Allow executing Python shipped in the model repo. Off by "
+                        "default because --model is arbitrary text.")
     p.add_argument("--max-new-tokens", type=int, default=128)
     p.add_argument("--max-new-tokens-escalation", type=int, default=96)
     p.add_argument("--gpu-rate-usd-per-hour", type=float, default=0.0)
@@ -89,9 +92,9 @@ def main():
     cfg = GCGConfig(preset=args.preset)
     if args.model:
         cfg.model_id = args.model
-    if args.steps:
+    if args.steps is not None:
         cfg.num_steps = args.steps
-    if args.num_prompts:
+    if args.num_prompts is not None:
         cfg.num_eval_prompts = args.num_prompts
     cfg.load_in_4bit = args.load_in_4bit
     torch.manual_seed(cfg.seed)
@@ -134,10 +137,12 @@ def main():
         print(f"Loading {cfg.model_id} ...")
         model, tokenizer = load_model_and_tokenizer(
             cfg.model_id, cfg.dtype, args.device, cfg.load_in_4bit,
+            trust_remote_code=args.trust_remote_code,
         )
         device = resolve_device(args.device)
         model_info = describe_model(
             tiny=False, model_id=cfg.model_id, tokenizer=tokenizer, seed=cfg.seed,
+            model=model, requested_4bit=cfg.load_in_4bit,
         )
     model_load_s = time.perf_counter() - t_load
     floor = loss_floor(model_info["vocab_size"])

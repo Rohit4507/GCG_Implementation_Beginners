@@ -27,14 +27,18 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
+# CPU wheels first, so the `torch` line in requirements.txt is already satisfied
+# and pip does not pull the CUDA stack and blow the image up to ~5 GB.
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch \
     || pip install torch
 RUN pip install -r requirements.txt
 
 COPY . .
 
-# Fail the build if the pipeline is broken: 7 offline checks, seconds on CPU.
+# Fail the build if the pipeline is broken: 7 offline checks + the full unit
+# suite, seconds on CPU.
 RUN python -m experiments.run_smoke \
     && python -m unittest discover -s tests
 
+# Non-quiet so the build log states which checks ran, matching the README.
 CMD ["python", "-m", "experiments.run_smoke"]
