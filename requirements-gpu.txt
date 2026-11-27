@@ -1,0 +1,30 @@
+# GPU / real-model extras.
+#
+# `requirements.txt` is deliberately CPU-only and small: CI and the offline
+# smoke test must install in seconds and download nothing. Real-model runs
+# (anything with `--model <hf-id>`) need the packages below.
+#
+#   pip install -r requirements.txt -r requirements-gpu.txt
+#
+# Install these BEFORE using --load-in-4bit. Without bitsandbytes, transformers
+# only *warns* that quantization was requested and then loads the model
+# unquantized; `src/model.py` now raises QuantizationUnavailable instead of
+# letting such a run be recorded as 4-bit.
+
+# 4-bit / 8-bit quantization. Needed for --load-in-4bit and for any 7B-8B
+# model on a 16 GB card.
+bitsandbytes>=0.46.1
+
+# Device placement / memory offload for the 4-bit path.
+accelerate>=0.30.0
+
+# Pulls the full AdvBench benchmark (walledai/AdvBench, 520 behaviours) from the
+# HF hub instead of the bundled 30-pair sample.
+datasets>=2.18.0
+
+# Lint config lives in setup.cfg; CI needs this one package for it:
+#   pip install flake8 && flake8 src experiments tests
+
+# Optional: the `model` judge for PAIR needs no extra package, but gated
+# checkpoints (e.g. meta-llama/*) need a token:
+#   huggingface-cli login

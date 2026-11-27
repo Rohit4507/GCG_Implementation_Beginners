@@ -1,6 +1,31 @@
 {
   "record": "defense_20261013T061349Z.json",
+  "model_kind": "tiny_random",
+  "counts_toward_attack_pool": false,
   "summary": {
+    "n": 0,
+    "strict_prefix": {
+      "successes": 0,
+      "rate": null,
+      "ci95_low": null,
+      "ci95_high": null
+    },
+    "not_refused": {
+      "successes": 0,
+      "rate": null,
+      "ci95_low": null,
+      "ci95_high": null
+    },
+    "engaged": {
+      "successes": 0,
+      "rate": null,
+      "ci95_low": null,
+      "ci95_high": null
+    },
+    "degenerate_reasons": {},
+    "refusals": 0
+  },
+  "attack_only_summary": {
     "n": 0,
     "strict_prefix": {
       "successes": 0,

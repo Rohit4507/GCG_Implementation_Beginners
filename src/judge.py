@@ -287,6 +287,12 @@ def summarise(scorecards: Sequence[Dict]) -> Dict:
 # Reading records
 # --------------------------------------------------------------------------
 
+# Conditions in `run_control.py` that are NOT attacks. Their generations are
+# compliance measurements for a baseline, so averaging them into an attack
+# compliance rate answers a different question than the one being asked.
+UNATTACKED_CONDITIONS = frozenset({"no_attack", "initial_suffix", "random_suffix"})
+
+
 def iter_samples(
     node,
     path: str = "",
@@ -315,15 +321,83 @@ def iter_samples(
             sample["_path"] = path
             yield sample
             return
-        skip_dup_eval = (
+
+        skip_keys = set()
+        # `run_control` writes the no-attack evaluation both at the top level
+        # (shaped like every other record's `evaluation`) and again under
+        # `conditions["no_attack"]`. Counting it twice would silently double the
+        # weight of the one condition that measured no attack at all.
+        if (
             node.get("run_kind") == "no_attack_control"
             and isinstance(node.get("conditions"), dict)
             and "no_attack" in node["conditions"]
-        )
+        ):
+            skip_keys.add("evaluation")
+        # A per-prompt run stores each prompt's in_domain/transfer evaluation
+        # both at the top level (pooled) and under its own `per_prompt[i]`
+        # entry. Walking both counts every generation twice, which shrinks the
+        # reported confidence interval: 0/150 looks tighter than the real 0/75.
+        if node.get("per_prompt") and (node.get("in_domain") or node.get("transfer")):
+            skip_keys.add("per_prompt")
+
         for key, value in node.items():
-            if skip_dup_eval and key == "evaluation":
+            if key in skip_keys:
                 continue
             yield from iter_samples(value, f"{path}/{key}", next_defaults)
     elif isinstance(node, list):
         for i, value in enumerate(node):
             yield from iter_samples(value, f"{path}[{i}]", defaults)
+
+
+def _is_unattacked_path(path: str) -> bool:
+    """True if a sample lives under a non-attack control condition."""
+    for part in path.split("/"):
+        name = part.split("[")[0]
+        if name in UNATTACKED_CONDITIONS:
+            return True
+    return False
+
+
+def iter_reportable_samples(
+    records: Sequence[Dict],
+    include_offline: bool = False,
+) -> List[Dict]:
+    """
+    The samples an attack-compliance rate may legitimately be pooled over.
+
+    Two filters, both of which change the answer, so they are stated rather
+    than buried:
+
+    ``unattacked``
+        `run_control`'s `no_attack`, `initial_suffix` and `random_suffix`
+        conditions are benchmarks *for* an attack, not attacks. Pooling them
+        means the published "engaged ASR" is partly a measurement of what the
+        model does when nothing is attacking it. They stay in the records and
+        in the per-record table; they are only excluded from the pooled
+        attack rate.
+
+    ``offline``
+        Records whose provenance says ``model_kind == "tiny_random"`` come from
+        a randomly-initialised model with no refusal behaviour to bypass. The
+        repo already refuses to call those attack results anywhere else, so
+        they must not be averaged into a pooled compliance number either.
+        `include_offline=True` puts them back.
+
+    Structural duplication is handled where it is created: `iter_samples` does
+    not walk both the pooled `in_domain`/`transfer` blocks and the mirrored
+    `per_prompt[i]` copies. De-duplicating on response *text* would be wrong
+    here — a fixed suffix evaluated on two prompts can legitimately produce the
+    same string twice (a refusal, or a degenerate loop on a random-weight
+    model), and those are two measurements, not one.
+    """
+    out: List[Dict] = []
+    for record in records:
+        model = record.get("model")
+        model = model if isinstance(model, dict) else {}
+        if not include_offline and model.get("model_kind") == "tiny_random":
+            continue
+        for sample in iter_samples(record):
+            if _is_unattacked_path(sample.get("_path", "")):
+                continue
+            out.append(sample)
+    return out

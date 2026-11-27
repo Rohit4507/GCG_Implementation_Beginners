@@ -24,7 +24,12 @@ from typing import Dict, List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.judge import iter_samples, score_response, summarise  # noqa: E402
+from src.judge import (  # noqa: E402
+    _is_unattacked_path,
+    iter_samples,
+    score_response,
+    summarise,
+)
 
 DEFAULT_GLOB = "results/reports/generated/*.json"
 OUT_DIR = "results/reports/scorecards"
@@ -44,6 +49,9 @@ def score_record(path: str) -> Dict:
     with open(path) as fh:
         record = json.load(fh)
 
+    model = record.get("model")
+    model = model if isinstance(model, dict) else {}
+
     samples = []
     for s in iter_samples(record):
         card = score_response(
@@ -53,11 +61,20 @@ def score_record(path: str) -> Dict:
             prompt=s.get("prompt") or s.get("goal", ""),
         )
         card["_path"] = s.get("_path", "")
+        # Same two flags `src.judge.iter_reportable_samples` uses to decide what
+        # may be pooled into an attack-compliance rate. Keeping them on the card
+        # means a reader can reproduce the dashboard's denominator from the
+        # scorecard alone, instead of having to know which condition each
+        # `_path` belongs to.
+        card["_is_attack"] = not _is_unattacked_path(s.get("_path", ""))
         samples.append(card)
 
     return {
         "record": os.path.basename(path),
+        "model_kind": model.get("model_kind"),
+        "counts_toward_attack_pool": model.get("model_kind") != "tiny_random",
         "summary": summarise(samples),
+        "attack_only_summary": summarise([s for s in samples if s["_is_attack"]]),
         "samples": samples,
     }
 

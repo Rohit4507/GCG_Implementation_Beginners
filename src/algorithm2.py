@@ -141,8 +141,6 @@ def run_universal_gcg(
         # Average normalized gradients
         aggregated_grad /= num_active
 
-        mean_loss = total_loss / num_active
-
         # ---------------------------------------------------------
         # Steps 2–3: Sample candidate suffixes
         # ---------------------------------------------------------

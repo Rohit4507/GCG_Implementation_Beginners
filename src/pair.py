@@ -41,7 +41,6 @@ Design notes (why it looks the way it does):
 """
 import json
 import re
-from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 import torch

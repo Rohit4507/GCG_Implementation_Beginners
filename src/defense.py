@@ -6,11 +6,11 @@ which makes them stand out under a language-model perplexity filter
 (mentioned e.g. in the GCG paper and Pulfer's write-up). This module
 measures suffix perplexity and applies a simple threshold detector.
 """
-from typing import Dict, Optional
+from typing import Dict
 
 import torch
 
-from .evaluate import suffix_perplexity, text_perplexity
+from .evaluate import suffix_perplexity
 from .token_manager import TokenManager
 
 

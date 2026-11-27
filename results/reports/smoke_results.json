@@ -5,12 +5,12 @@
   "checks": {
     "kv_cache_matches_plain": {
       "pass": true,
-      "grad_max_abs_diff": 1.3969838619232178e-09,
+      "grad_max_abs_diff": 1.1641532182693481e-09,
       "grad_loss_abs_diff": 0.0,
       "candidate_loss_max_abs_diff": 4.76837158203125e-07,
       "trajectory_max_abs_diff": 4.76837158203125e-07,
       "time_plain_s": 0.15,
-      "time_kv_cache_s": 0.14,
+      "time_kv_cache_s": 0.15,
       "loss_first": 6.291787624359131,
       "loss_last": 6.271170616149902
     },

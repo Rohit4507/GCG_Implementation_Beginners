@@ -73,5 +73,64 @@ class TestSummariseComparison(unittest.TestCase):
         self.assertIn("incomplete", out["verdict"])
 
 
+class TestBuildPriorTurns(unittest.TestCase):
+    """
+    `build_prior_turns` runs a scripted escalation conversation and returns the
+    messages to prepend plus a transcript. It was uncovered, and it is the only
+    thing that decides how many turns a "3-turn attack" actually has.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from src.tiny_model import build_tiny_model_and_tokenizer
+        cls.model, cls.tokenizer = build_tiny_model_and_tokenizer(seed=0)
+
+    def _build(self, n_prior_turns):
+        from src.multiturn import build_prior_turns
+        return build_prior_turns(
+            self.model, self.tokenizer, "cpu",
+            n_prior_turns=n_prior_turns, max_new_tokens=4, verbose=False,
+        )
+
+    def test_returns_alternating_user_and_assistant_messages(self):
+        prior_turns, transcript = self._build(2)
+        self.assertEqual(len(prior_turns), 4)
+        self.assertEqual([m["role"] for m in prior_turns],
+                         ["user", "assistant", "user", "assistant"])
+
+    def test_transcript_matches_the_message_count(self):
+        prior_turns, transcript = self._build(2)
+        self.assertEqual(len(transcript), 2)
+        for entry, message in zip(transcript, prior_turns[::2]):
+            self.assertEqual(entry["user"], message["content"])
+
+    def test_n_prior_turns_is_respected(self):
+        for n in (0, 1, 2):
+            prior_turns, transcript = self._build(n)
+            self.assertEqual(len(transcript), n)
+            self.assertEqual(len(prior_turns), 2 * n)
+
+    def test_user_turn_count_matches_the_documented_attack_shape(self):
+        """
+        `count_prior_turns` counts user turns only, so a "3-turn attack" with
+        2 prior turns reports 2 and the attacked message is turn 3.
+        """
+        from src.multiturn import count_context_messages, count_prior_turns
+        prior_turns, _ = self._build(2)
+        self.assertEqual(count_prior_turns(prior_turns), 2)
+        self.assertEqual(count_context_messages(prior_turns), 4)
+
+    def test_assistant_replies_are_non_empty_strings(self):
+        prior_turns, _ = self._build(1)
+        self.assertIsInstance(prior_turns[1]["content"], str)
+        self.assertGreater(len(prior_turns[1]["content"]), 0)
+
+    def test_counters_handle_none(self):
+        from src.multiturn import count_context_messages, count_prior_turns
+        self.assertEqual(count_prior_turns(None), 0)
+        self.assertEqual(count_prior_turns([]), 0)
+        self.assertEqual(count_context_messages(None), 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -18,7 +18,7 @@ Two jobs, both about honesty of the run records in `results/`:
 
 Used by every runner in `experiments/`.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Optional
 
 # Conventional name for the offline random-weight model built by src/tiny_model.py
@@ -32,6 +32,8 @@ def describe_model(
     tokenizer=None,
     seed: Optional[int] = None,
     vocab_size: Optional[int] = None,
+    model=None,
+    requested_4bit: Optional[bool] = None,
 ) -> Dict:
     """
     Describe the model a run actually used.
@@ -41,6 +43,10 @@ def describe_model(
         model_id: The HF id from the config (may be unused when tiny=True).
         tokenizer: The loaded tokenizer, used to read the real vocabulary size.
         seed: Tiny-model seed, when applicable.
+        model: The loaded model object, when available. Used to record the
+            quantization that was *actually applied* rather than the CLI flag
+            that was passed.
+        requested_4bit: The `--load-in-4bit` value, when known.
 
     Returns a dict that is written verbatim into the run record.
     """
@@ -70,7 +76,7 @@ def describe_model(
             ),
         }
 
-    return {
+    info = {
         "model_label": model_id,
         "model_kind": "hf_pretrained",
         "hf_model_id": model_id,
@@ -79,6 +85,28 @@ def describe_model(
         "vocab_size": vocab_size,
         "note": "Pretrained checkpoint loaded from the Hugging Face hub.",
     }
+
+    # Record what quantization was APPLIED, not what was asked for. A record
+    # that says "4-bit" while the weights are fp16 misstates the memory and
+    # speed the run actually consumed.
+    if model is not None:
+        try:
+            from .model import model_quantization
+            applied = model_quantization(model, requested=bool(requested_4bit))
+        except Exception:  # pragma: no cover - never fail a record on this
+            applied = None
+        if applied is not None:
+            info["quantization"] = applied
+            info["loaded_4bit"] = applied["applied_4bit"]
+            if requested_4bit and not applied["applied_4bit"]:
+                info["note"] = (
+                    "4-bit was requested but the model loaded unquantized; the "
+                    "cost and memory figures describe an fp16/bf16 run."
+                )
+    elif requested_4bit is not None:
+        info["requested_4bit"] = bool(requested_4bit)
+
+    return info
 
 
 def loss_floor(vocab_size: Optional[int]) -> Optional[float]:
@@ -188,6 +216,23 @@ class RunAccounting:
         if self.notes:
             d["notes"] = self.notes
         return d
+
+
+def final_loss(history, fallback=None):
+    """
+    The last loss in an optimisation history, or `fallback` if none ran.
+
+    A `--steps 0` probe is a legitimate sanity check: it loads the model, builds
+    the token manager, plots, and writes a record without ever entering the loop.
+    `history` is then empty, and `history[-1]` is an IndexError that fires at the
+    very end of the run -- after any GPU time has already been spent -- which is
+    the worst possible place to discover it.
+
+    Callers pass the unoptimised suffix's loss as `fallback`, so a zero-step
+    record says "nothing was optimised, this is the starting point" rather than
+    reporting a fabricated improvement.
+    """
+    return history[-1] if history else fallback
 
 
 def count_successes(evaluation: Dict) -> int:

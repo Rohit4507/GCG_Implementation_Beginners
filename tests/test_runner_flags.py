@@ -15,7 +15,11 @@ from unittest.mock import MagicMock, patch
 
 from src.config import GCGConfig
 from src.evaluate import evaluate_pairs
-from src.model import init_suffix_ids, load_model_and_tokenizer
+from src.model import (
+    QuantizationUnavailable,
+    init_suffix_ids,
+    load_model_and_tokenizer,
+)
 from src.tiny_model import build_tiny_model_and_tokenizer
 
 
@@ -37,16 +41,81 @@ class TestModelLoadingDeviceSafety(unittest.TestCase):
     def test_4bit_pins_single_gpu_and_never_calls_dot_to(self):
         mock_tok = MagicMock(pad_token="<pad>")
         mock_model = MagicMock()
+        # Pretend bitsandbytes is installed; the real package is an optional
+        # dependency and this test is about the loader's arguments, not bnb.
+        mock_model.is_quantized = True
 
         with patch("src.model.AutoTokenizer.from_pretrained", return_value=mock_tok), \
              patch("src.model.AutoModelForCausalLM.from_pretrained", return_value=mock_model) as mock_from, \
-             patch("src.model.resolve_device", return_value="cuda:0"):
+             patch("src.model.resolve_device", return_value="cuda:0"), \
+             patch("src.model._require_bitsandbytes", return_value=None):
             load_model_and_tokenizer("dummy/model", dtype="float16", device="cuda:0", load_in_4bit=True)
 
         call_kwargs = mock_from.call_args.kwargs
         self.assertEqual(call_kwargs["device_map"], {"": "cuda:0"})
         self.assertIn("quantization_config", call_kwargs)
         mock_model.to.assert_not_called()
+
+    def test_4bit_without_bitsandbytes_refuses_instead_of_loading_fp16(self):
+        """
+        transformers only *warns* when bitsandbytes is missing and then loads
+        the model unquantized, so a 7B run on a 16GB card either OOMs or gets
+        recorded as a 4-bit run it never was. Fail loudly instead.
+        """
+        mock_tok = MagicMock(pad_token="<pad>")
+        mock_model = MagicMock()
+
+        with patch("src.model.AutoTokenizer.from_pretrained", return_value=mock_tok), \
+             patch("src.model.AutoModelForCausalLM.from_pretrained", return_value=mock_model), \
+             patch("src.model.resolve_device", return_value="cuda:0"), \
+             patch("src.model._require_bitsandbytes", side_effect=QuantizationUnavailable("no bnb")):
+            with self.assertRaises(QuantizationUnavailable):
+                load_model_and_tokenizer(
+                    "dummy/model", dtype="float16", device="cuda:0", load_in_4bit=True,
+                )
+
+    def test_quantization_requested_but_not_applied_is_an_error(self):
+        mock_tok = MagicMock(pad_token="<pad>")
+        mock_model = MagicMock()
+        mock_model.is_quantized = False
+        mock_model.config.quantization_config = None
+
+        with patch("src.model.AutoTokenizer.from_pretrained", return_value=mock_tok), \
+             patch("src.model.AutoModelForCausalLM.from_pretrained", return_value=mock_model), \
+             patch("src.model.resolve_device", return_value="cuda:0"), \
+             patch("src.model._require_bitsandbytes", return_value=None):
+            with self.assertRaises(QuantizationUnavailable):
+                load_model_and_tokenizer(
+                    "dummy/model", dtype="float16", device="cuda:0", load_in_4bit=True,
+                )
+
+    def test_trust_remote_code_is_off_by_default(self):
+        """--model is arbitrary text; executing repo Python must be opt-in."""
+        mock_tok = MagicMock(pad_token="<pad>")
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+
+        with patch("src.model.AutoTokenizer.from_pretrained", return_value=mock_tok) as tok_from, \
+             patch("src.model.AutoModelForCausalLM.from_pretrained", return_value=mock_model) as mock_from, \
+             patch("src.model.resolve_device", return_value="cuda"):
+            load_model_and_tokenizer("dummy/model", dtype="float16", device="cuda")
+
+        self.assertFalse(mock_from.call_args.kwargs["trust_remote_code"])
+        self.assertFalse(tok_from.call_args.kwargs["trust_remote_code"])
+
+    def test_trust_remote_code_can_be_opted_into(self):
+        mock_tok = MagicMock(pad_token="<pad>")
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+
+        with patch("src.model.AutoTokenizer.from_pretrained", return_value=mock_tok), \
+             patch("src.model.AutoModelForCausalLM.from_pretrained", return_value=mock_model) as mock_from, \
+             patch("src.model.resolve_device", return_value="cuda"):
+            load_model_and_tokenizer(
+                "dummy/model", dtype="float16", device="cuda", trust_remote_code=True,
+            )
+
+        self.assertTrue(mock_from.call_args.kwargs["trust_remote_code"])
 
 
 class TestConfigPresets(unittest.TestCase):
@@ -209,6 +278,58 @@ class TestKaggleRunbook(unittest.TestCase):
                     continue
                 kept.append(line)
             ast.parse("".join(kept), filename=f"cell_{i}")
+
+
+class TestEveryRunnerSurvivesZeroSteps(unittest.TestCase):
+    """
+    `--steps 0` is the cheapest possible sanity probe: load the model, build the
+    token manager, write a record, exit. It is also the case where every
+    "final loss" list is empty, so every `history[-1]` in the reporting layer is
+    an IndexError -- thrown at the very end, after the work is done.
+
+    This shipped broken once. `TestRunnerFlagZero` above only greps the source
+    for `if args.steps:` and passed happily while three runners crashed. These
+    execute each runner for real.
+
+    Each entry is one runner plus the flags needed to keep it offline and fast.
+    Slow by design (~2-6s each on the bundled tiny model): the point is to cross
+    the config -> optimiser -> record seam, which no static check can see.
+    """
+
+    RUNNERS = [
+        ("run_algorithm1", ["--tiny", "--benchmark", "--steps", "0",
+                            "--num-prompts", "2", "--quiet"]),
+        ("run_algorithm2", ["--tiny", "--benchmark", "--steps", "0",
+                            "--num-prompts", "2", "--quiet"]),
+        ("run_baselines", ["--tiny", "--benchmark", "--steps", "0",
+                           "--max-new-tokens", "4"]),
+        ("run_transfer", ["--tiny", "--benchmark", "--steps", "0",
+                          "--max-new-tokens", "4"]),
+        ("run_multiturn", ["--tiny", "--benchmark", "--steps", "0",
+                           "--max-new-tokens", "4"]),
+    ]
+
+    def test_zero_steps_completes_for_every_runner(self):
+        from tests._isolated import run_module
+
+        failures = []
+        for module, flags in self.RUNNERS:
+            result = run_module(module, flags)
+            if result.returncode != 0:
+                tail = (result.stderr or result.stdout).strip().splitlines()[-4:]
+                failures.append(f"{module} exit={result.returncode}: {' / '.join(tail)}")
+        self.assertEqual(
+            failures, [],
+            "these runners crash on --steps 0:\n  " + "\n  ".join(failures),
+        )
+
+    def test_final_loss_helper_covers_the_empty_case(self):
+        """The shared helper the runners now use instead of `history[-1]`."""
+        from src.provenance import final_loss
+
+        self.assertEqual(final_loss([], 1.5), 1.5)
+        self.assertEqual(final_loss([2.0, 1.0]), 1.0)
+        self.assertIsNone(final_loss([], None))
 
 
 if __name__ == "__main__":
