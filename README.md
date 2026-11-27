@@ -218,7 +218,7 @@ data/
 kaggle/
   real_model_runbook.ipynb  # free-tier 2×T4 GPU runbook
   README.md            # setup, quota discipline, definition of done
-tests/                 # 242 unit tests (metrics, judge, sampling pool, scope,
+tests/                 # 247 unit tests (metrics, judge, sampling pool, scope,
                        #   provenance, CLI, vocab, KV-cache, baselines, tokenizer,
                        #   Algorithm 1 gradient core)
 requirements-gpu.txt   # bitsandbytes / accelerate / datasets for real-model runs
@@ -246,7 +246,7 @@ docker build -t gcg-scratch . && docker run --rm gcg-scratch
 
 # 1. Validate the whole pipeline offline (CPU, seconds, no downloads)
 python -m experiments.run_smoke
-python -m unittest discover -s tests        # 242 unit tests
+python -m unittest discover -s tests        # 247 unit tests
 
 # 2. Re-score existing JSON records and rebuild docs/index.html offline
 python -m experiments.rescore

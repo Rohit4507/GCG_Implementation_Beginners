@@ -205,5 +205,61 @@ class TestRunnerFlagZero(unittest.TestCase):
         self.assertEqual(bad, [], "truthiness test on a numeric CLI flag")
 
 
+class TestZeroStepsEndToEnd(unittest.TestCase):
+    """
+    The regex test above is necessary but not sufficient, and this class exists
+    because that gap shipped a bug.
+
+    `TestRunnerFlagZero` only greps the source for `if args.steps:`. It passed
+    while `run_algorithm1 --steps 0` crashed at the very end of the run with
+
+        TypeError: unsupported format string passed to NoneType.__format__
+
+    because `RunAccounting.seconds_per_step` returns None when no step ran and
+    the summary line formatted it as `:.2f`. The config honoured zero, the
+    optimiser correctly did nothing, and then the reporting layer died -- after
+    the GPU time was already spent. A static check cannot see across that seam.
+
+    So these actually execute the runner. They are slow (~5s each, offline tiny
+    model) and that is the price of testing the seam rather than the source.
+    """
+
+    def _run(self, *args):
+        from tests._isolated import run_module
+        return run_module("run_algorithm1", list(args))
+
+    def test_steps_zero_completes_and_records_zero(self):
+        result = self._run(
+            "--tiny", "--benchmark", "--steps", "0",
+            "--num-prompts", "2", "--quiet",
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"--steps 0 must complete; stderr tail:\n"
+            f"{result.stderr.strip()[-800:]}",
+        )
+        self.assertIn("Compute: 0 steps", result.stdout)
+
+    def test_steps_zero_print_says_per_step_is_not_applicable(self):
+        """No step ran, so a seconds-per-step figure would be a division by zero."""
+        result = self._run(
+            "--tiny", "--benchmark", "--steps", "0",
+            "--num-prompts", "2", "--quiet",
+        )
+        self.assertNotIn("None", result.stdout)
+        self.assertIn("n/a per-step", result.stdout)
+
+    def test_steps_one_still_reports_a_real_per_step_figure(self):
+        """The fix must not turn a genuine measurement into 'n/a'."""
+        result = self._run(
+            "--tiny", "--benchmark", "--steps", "1",
+            "--num-prompts", "2", "--quiet",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.strip()[-800:])
+        self.assertIn("Compute: 1 steps", result.stdout)
+        self.assertIn("s/step", result.stdout)
+        self.assertNotIn("n/a per-step", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

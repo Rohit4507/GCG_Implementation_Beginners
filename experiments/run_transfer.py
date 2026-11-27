@@ -21,13 +21,15 @@ from datetime import datetime, timezone
 
 import torch
 
-from src.algorithm1 import run_gcg
+from src.algorithm1 import compute_token_gradient, run_gcg
 from src.baselines import target_loss
 from src.config import GCGConfig
 from src.data import load_benchmark_pairs, load_pairs
 from src.evaluate import evaluate_pairs
 from src.model import init_suffix_ids, load_model_and_tokenizer, resolve_device
-from src.provenance import RunAccounting, count_successes, describe_model, loss_floor
+from src.provenance import (
+    RunAccounting, count_successes, describe_model, final_loss, loss_floor,
+)
 from src.token_manager import TokenManager
 
 
@@ -159,6 +161,10 @@ def main():
         search_width=cfg.search_width, mini_batch_size=cfg.mini_batch_size,
         use_kv_cache=cfg.use_kv_cache, verbose=True, stats_out=stats,
     )
+    # The unoptimised suffix's loss, used as the honest fallback when
+    # --steps 0 means the history above is empty.
+    _tm_a0 = TokenManager(tok_a, goal, target, suffix_a.clone(), str(device))
+    initial_source_loss = float(compute_token_gradient(model_a, _tm_a0, suffix_a.clone())[1])
     suffix_text = tok_a.decode(best_a, skip_special_tokens=True)
     print(f"Source suffix: {suffix_text!r}")
 
@@ -210,7 +216,7 @@ def main():
     n_successes = sum(count_successes(e) for e in evaluation.values())
     accounting = RunAccounting(
         device=device,
-        steps_run=stats.get("steps_run", len(losses_a)),
+        steps_run=stats.get("steps_run", 0),
         gradient_forwards=stats.get("gradient_forwards", 0),
         candidate_forwards=stats.get("candidate_forwards", 0),
         wall_clock_s=stats.get("wall_clock_s", 0.0),
@@ -241,7 +247,7 @@ def main():
         "source_suffix": suffix_text,
         "retokenized_suffix": suffix_b_text,
         "retokenized_length_ok": retok_ok,
-        "source_final_loss": losses_a[-1],
+        "source_final_loss": final_loss(losses_a, initial_source_loss),
         "source_random_guess_floor": loss_floor(model_infos["source"]["vocab_size"]),
         "evaluation_on_target": evaluation,
         "accounting": accounting.as_dict(),

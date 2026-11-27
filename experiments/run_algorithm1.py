@@ -447,10 +447,16 @@ def main():
     elif not args.per_prompt:
         print("\nTRANSFER ASR: n/a (only one prompt loaded)")
 
+    # `seconds_per_step` is None when no step ran (e.g. --steps 0), so it
+    # cannot go straight into a float format. Reporting "n/a" keeps the
+    # zero-step sanity run usable instead of crashing after the work is done.
+    per_step = (
+        f"{accounting.seconds_per_step:.2f}s/step"
+        if accounting.seconds_per_step is not None else "n/a per-step"
+    )
     print(f"\nCompute: {accounting.steps_run} steps | "
           f"{accounting.total_forwards:,} forwards | "
-          f"{accounting.wall_clock_s:.1f}s "
-          f"({accounting.seconds_per_step:.2f}s/step)")
+          f"{accounting.wall_clock_s:.1f}s ({per_step})")
     if accounting.cost_per_success_usd is None:
         print("Cost per successful attack: UNDEFINED (0 strict-prefix successes in this run)")
     else:

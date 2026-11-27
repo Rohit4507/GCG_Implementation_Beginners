@@ -33,18 +33,21 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 
-from src.algorithm1 import run_gcg
+from src.algorithm1 import compute_token_gradient, run_gcg
 from src.config import GCGConfig
 from src.data import load_benchmark_pairs, load_pairs
 from src.evaluate import evaluate_pairs
 from src.model import init_suffix_ids, load_model_and_tokenizer, resolve_device
+from src.token_manager import TokenManager
 from src.multiturn import (
     build_prior_turns,
     count_context_messages,
     count_prior_turns,
     summarise_comparison,
 )
-from src.provenance import RunAccounting, count_successes, describe_model, loss_floor
+from src.provenance import (
+    RunAccounting, count_successes, describe_model, final_loss, loss_floor,
+)
 
 
 def parse_args():
@@ -71,6 +74,15 @@ def parse_args():
     return p.parse_args()
 
 
+def _initial_loss(model, tokenizer, goal, target, suffix_ids, prior_turns):
+    """Target loss of the unoptimised suffix, i.e. the run's starting point."""
+    tm = TokenManager(
+        tokenizer, goal, target, suffix_ids.clone(),
+        str(next(model.parameters()).device), prior_turns=prior_turns,
+    )
+    return float(compute_token_gradient(model, tm, suffix_ids.clone())[1])
+
+
 def _optimise(model, tokenizer, goal, target, suffix_ids, cfg, prior_turns, label):
     """Run Algorithm 1 once and return (best_suffix, loss_history, stats)."""
     print(f"\n--- Optimising ({label}, {cfg.num_steps} steps) ---")
@@ -83,7 +95,10 @@ def _optimise(model, tokenizer, goal, target, suffix_ids, cfg, prior_turns, labe
         prior_turns=prior_turns,
     )
     print(f"    suffix: {tokenizer.decode(best_suffix, skip_special_tokens=True)!r}")
-    print(f"    loss {loss_history[0]:.4f} -> {loss_history[-1]:.4f}")
+    if loss_history:
+        print(f"    loss {loss_history[0]:.4f} -> {loss_history[-1]:.4f}")
+    else:
+        print("    no optimisation step ran (--steps 0); suffix is unchanged")
     return best_suffix, loss_history, stats
 
 
@@ -164,6 +179,14 @@ def main():
             verbose=True,
         )
 
+    # Loss of the unoptimised suffix in each setting, used as the honest value
+    # when --steps 0 leaves the optimisation history empty.
+    single_initial = _initial_loss(model, tokenizer, goal, target, suffix_ids, None)
+    multi_initial = (
+        _initial_loss(model, tokenizer, goal, target, suffix_ids, prior_turns)
+        if prior_turns else single_initial
+    )
+
     # ---- Single-turn attack ----
     single_suffix, single_losses, single_stats = _optimise(
         model, tokenizer, goal, target, suffix_ids, cfg, None, "single-turn",
@@ -186,11 +209,11 @@ def main():
 
     # ---- Compare ----
     single_side = {
-        "loss_last": single_losses[-1],
+        "loss_last": final_loss(single_losses, single_initial),
         "evaluation": single_eval,
     }
     multi_side = {
-        "loss_last": multi_losses[-1],
+        "loss_last": final_loss(multi_losses, multi_initial),
         "evaluation": multi_eval,
     }
     comparison = summarise_comparison(single_side, multi_side)
@@ -245,8 +268,8 @@ def main():
         "escalation_transcript": transcript,
         "single_turn": {
             "suffix": tokenizer.decode(single_suffix, skip_special_tokens=True),
-            "loss_first": single_losses[0],
-            "loss_last": single_losses[-1],
+            "loss_first": final_loss(single_losses, single_initial),
+            "loss_last": final_loss(single_losses, single_initial),
             "accounting": RunAccounting(
                 device=device,
                 steps_run=single_stats.get("steps_run", 0),
@@ -261,8 +284,8 @@ def main():
         },
         "multi_turn": {
             "suffix": tokenizer.decode(multi_suffix, skip_special_tokens=True),
-            "loss_first": multi_losses[0],
-            "loss_last": multi_losses[-1],
+            "loss_first": final_loss(multi_losses, multi_initial),
+            "loss_last": final_loss(multi_losses, multi_initial),
             "accounting": RunAccounting(
                 device=device,
                 steps_run=multi_stats.get("steps_run", 0),

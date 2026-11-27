@@ -280,5 +280,57 @@ class TestKaggleRunbook(unittest.TestCase):
             ast.parse("".join(kept), filename=f"cell_{i}")
 
 
+class TestEveryRunnerSurvivesZeroSteps(unittest.TestCase):
+    """
+    `--steps 0` is the cheapest possible sanity probe: load the model, build the
+    token manager, write a record, exit. It is also the case where every
+    "final loss" list is empty, so every `history[-1]` in the reporting layer is
+    an IndexError -- thrown at the very end, after the work is done.
+
+    This shipped broken once. `TestRunnerFlagZero` above only greps the source
+    for `if args.steps:` and passed happily while three runners crashed. These
+    execute each runner for real.
+
+    Each entry is one runner plus the flags needed to keep it offline and fast.
+    Slow by design (~2-6s each on the bundled tiny model): the point is to cross
+    the config -> optimiser -> record seam, which no static check can see.
+    """
+
+    RUNNERS = [
+        ("run_algorithm1", ["--tiny", "--benchmark", "--steps", "0",
+                            "--num-prompts", "2", "--quiet"]),
+        ("run_algorithm2", ["--tiny", "--benchmark", "--steps", "0",
+                            "--num-prompts", "2", "--quiet"]),
+        ("run_baselines", ["--tiny", "--benchmark", "--steps", "0",
+                           "--max-new-tokens", "4"]),
+        ("run_transfer", ["--tiny", "--benchmark", "--steps", "0",
+                          "--max-new-tokens", "4"]),
+        ("run_multiturn", ["--tiny", "--benchmark", "--steps", "0",
+                           "--max-new-tokens", "4"]),
+    ]
+
+    def test_zero_steps_completes_for_every_runner(self):
+        from tests._isolated import run_module
+
+        failures = []
+        for module, flags in self.RUNNERS:
+            result = run_module(module, flags)
+            if result.returncode != 0:
+                tail = (result.stderr or result.stdout).strip().splitlines()[-4:]
+                failures.append(f"{module} exit={result.returncode}: {' / '.join(tail)}")
+        self.assertEqual(
+            failures, [],
+            "these runners crash on --steps 0:\n  " + "\n  ".join(failures),
+        )
+
+    def test_final_loss_helper_covers_the_empty_case(self):
+        """The shared helper the runners now use instead of `history[-1]`."""
+        from src.provenance import final_loss
+
+        self.assertEqual(final_loss([], 1.5), 1.5)
+        self.assertEqual(final_loss([2.0, 1.0]), 1.0)
+        self.assertIsNone(final_loss([], None))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -197,9 +197,22 @@ def main():
         "goal": goal,
         "target": target,
         "random_guess_floor": floor,
-        "gcg_final_loss": gcg_losses[-1],
-        "random_search_final_loss": rnd_losses[-1],
-        "paired_diff_nats": rnd_losses[-1] - gcg_losses[-1],
+        # With --steps 0 no optimisation step ran, so the list is empty and
+        # `[-1]` is an IndexError. The honest value is the unoptimised suffix's
+        # loss: the suffix is exactly the initial one.
+        # `evaluation["initial"]["mean_target_loss"]` is the unoptimised
+        # suffix scored on the same scale, so it is the correct stand-in.
+        "gcg_final_loss": (
+            gcg_losses[-1] if gcg_losses
+            else evaluation["initial"]["mean_target_loss"]
+        ),
+        "random_search_final_loss": (
+            rnd_losses[-1] if rnd_losses
+            else evaluation["initial"]["mean_target_loss"]
+        ),
+        "paired_diff_nats": (
+            rnd_losses[-1] - gcg_losses[-1] if gcg_losses and rnd_losses else 0.0
+        ),
         "gcg_suffix": tokenizer.decode(gcg_suffix, skip_special_tokens=True),
         "random_search_suffix": tokenizer.decode(rnd_suffix, skip_special_tokens=True),
         "gcg_accounting": RunAccounting(
@@ -240,7 +253,10 @@ def main():
               f"{sm.get('asr_engaged', 0.0):>6.0%} | "
               f"{sm['refusal_rate']:>6.0%}")
     print("=" * 74)
-    if gcg_losses[-1] < rnd_losses[-1]:
+    if not gcg_losses or not rnd_losses:
+        print("⚠️ No optimisation step ran (`--steps 0`), so there is no "
+              "comparison to make. Both arms sit at the initial suffix.")
+    elif gcg_losses[-1] < rnd_losses[-1]:
         print("✅ Gradient guidance wins on final loss "
               f"({gcg_losses[-1]:.4f} < {rnd_losses[-1]:.4f})")
     else:

@@ -218,6 +218,23 @@ class RunAccounting:
         return d
 
 
+def final_loss(history, fallback=None):
+    """
+    The last loss in an optimisation history, or `fallback` if none ran.
+
+    A `--steps 0` probe is a legitimate sanity check: it loads the model, builds
+    the token manager, plots, and writes a record without ever entering the loop.
+    `history` is then empty, and `history[-1]` is an IndexError that fires at the
+    very end of the run -- after any GPU time has already been spent -- which is
+    the worst possible place to discover it.
+
+    Callers pass the unoptimised suffix's loss as `fallback`, so a zero-step
+    record says "nothing was optimised, this is the starting point" rather than
+    reporting a fabricated improvement.
+    """
+    return history[-1] if history else fallback
+
+
 def count_successes(evaluation: Dict) -> int:
     """
     Number of successful attacks in an `evaluate_pairs` result.
