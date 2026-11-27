@@ -211,14 +211,16 @@ experiments/
   rescore.py           # offline re-scoring of JSON records -> scorecards/
   build_report.py      # regenerates docs/index.html from results/reports/generated/
   check_docs_counts.py # fails CI if the README's own test/check counts drift
+  attic/               # superseded scripts, not imported by anything
 data/
   advbench_sample.jsonl  # 30-pair offline fallback (full AdvBench pulls from HF Hub)
   benign_pairs.jsonl     # safe demo pairs
 kaggle/
   real_model_runbook.ipynb  # free-tier 2×T4 GPU runbook
   README.md            # setup, quota discipline, definition of done
-tests/                 # 233 unit tests (metrics, judge, sampling pool, scope,
-                       #   provenance, CLI, vocab, KV-cache, baselines, tokenizer)
+tests/                 # 242 unit tests (metrics, judge, sampling pool, scope,
+                       #   provenance, CLI, vocab, KV-cache, baselines, tokenizer,
+                       #   Algorithm 1 gradient core)
 requirements-gpu.txt   # bitsandbytes / accelerate / datasets for real-model runs
 results/
   reports/generated/   # machine-readable run records (Qwen2.5-1.5B + offline tiny)
@@ -244,7 +246,7 @@ docker build -t gcg-scratch . && docker run --rm gcg-scratch
 
 # 1. Validate the whole pipeline offline (CPU, seconds, no downloads)
 python -m experiments.run_smoke
-python -m unittest discover -s tests        # 233 unit tests
+python -m unittest discover -s tests        # 242 unit tests
 
 # 2. Re-score existing JSON records and rebuild docs/index.html offline
 python -m experiments.rescore
